@@ -1,3 +1,11 @@
+// RapidFuzz diagnostics the matching layer attaches to each shortlisted
+// candidate — the raw signals behind the confidence score.
+export type MatchDiagnostics = {
+  name_score: number; // fuzzy name similarity, 0..1
+  jurisdiction_match: boolean;
+  prior_confidence: number; // confidence from the gather layer, pre re-scoring
+};
+
 export type CompanyRecord = {
   query_id: string;
   registry_id: string | null;
@@ -13,6 +21,8 @@ export type CompanyRecord = {
   organization_type: string | null;
   provider: string | null;
   snippet: string | null;
+  // Present on candidates that went through the RapidFuzz layer.
+  _match?: MatchDiagnostics;
 };
 
 export type QueryRow = {
@@ -20,6 +30,9 @@ export type QueryRow = {
   name: string;
   jurisdiction: string | null;
   count: number;
+  // Which registers were queried vs skipped for this row (jurisdiction routing).
+  sources_called?: string[];
+  sources_skipped?: string[];
 };
 
 // One winning result produced by the matching layer (RapidFuzz + LLM filter).

@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SearchBar } from './components/SearchBar';
+import { FlowGraph } from './components/FlowGraph';
+import { Phase, PipelineData, PipelinePanel } from './components/PipelinePanel';
 import { csvSearch, QueryRow, Winner } from './api';
 
 type State =
@@ -15,10 +17,40 @@ type State =
     }
   | { kind: 'error'; query: string; message: string };
 
+// The matching layer is a single HTTP call, so there is no server-streamed
+// progress. While the request is in flight we advance an "active stage" on a
+// timer to animate the live flow; on response we snap to the real counts.
+function useStageProgress(running: boolean): number {
+  const [stage, setStage] = useState(0);
+  useEffect(() => {
+    if (!running) return;
+    setStage(0);
+    const id = setInterval(() => {
+      // Walk fetch -> nation -> fuzzy -> semantic, then hold on the last.
+      setStage((s) => (s < 3 ? s + 1 : s));
+    }, 650);
+    return () => clearInterval(id);
+  }, [running]);
+  return stage;
+}
+
+function pipelineData(state: State): PipelineData | null {
+  if (state.kind !== 'ok') return null;
+  const fetched = state.queries.reduce((acc, q) => acc + (q.count || 0), 0);
+  const jurisdictions = [
+    ...new Set(state.queries.map((q) => q.jurisdiction).filter((j): j is string => !!j)),
+  ];
+  const fuzzy = state.winners.reduce((acc, w) => acc + (w.candidates?.length ?? 0), 0);
+  const matches = state.winners.filter((w) => w.decision === 'match').length;
+  return { fetched, jurisdictions, fuzzy, matches, winners: state.winners };
+}
+
 export default function App() {
   const [state, setState] = useState<State>({ kind: 'idle' });
+  const [showFlow, setShowFlow] = useState(false);
 
   async function runSearch(q: string) {
+    setShowFlow(false);
     setState({ kind: 'loading', query: q });
     try {
       const r = await csvSearch(q);
@@ -40,20 +72,48 @@ export default function App() {
   }
 
   const busy = state.kind === 'loading';
+  const activeStage = useStageProgress(busy);
+  const phase: Phase =
+    state.kind === 'loading'
+      ? 'running'
+      : state.kind === 'ok'
+        ? 'done'
+        : state.kind === 'error'
+          ? 'error'
+          : 'idle';
+  const data = pipelineData(state);
+  const queries = state.kind === 'ok' ? state.queries : [];
 
   return (
     <Shell>
-      <Header />
-      <SearchBar onSubmit={runSearch} busy={busy} />
-      <Results state={state} onRetry={() => state.kind === 'error' && runSearch(state.query)} />
+      <div className="space-y-6 min-w-0">
+        <Header />
+        <SearchBar onSubmit={runSearch} busy={busy} />
+        <Results
+          state={state}
+          onRetry={() => state.kind === 'error' && runSearch(state.query)}
+        />
+        {showFlow && data ? (
+          <FlowGraph data={data} queries={queries} onClose={() => setShowFlow(false)} />
+        ) : null}
+      </div>
+      <aside className="lg:sticky lg:top-12 h-fit">
+        <PipelinePanel
+          phase={phase}
+          activeStage={activeStage}
+          data={data}
+          flowOpen={showFlow}
+          onToggleFlow={() => setShowFlow((v) => !v)}
+        />
+      </aside>
     </Shell>
   );
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="mx-auto w-full max-w-2xl px-5 pt-16 pb-24 sm:pt-24">
-      <div className="space-y-6">{children}</div>
+    <main className="mx-auto w-full max-w-5xl px-5 pt-12 pb-24 sm:pt-16">
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">{children}</div>
     </main>
   );
 }
