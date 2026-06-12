@@ -45,6 +45,78 @@ CONFIDENCE_FIELD = "confidence"
 # vs "GmbH Sinpex") and to extra tokens, which is what registry names need.
 DEFAULT_SCORER: Callable[..., float] = fuzz.token_sort_ratio
 
+# ---------------------------------------------------------------------------
+# Legal-form suffix stripping (multi-country).
+#
+# "Sinpex" should match "Sinpex GmbH" at ~1.0, not ~0.7: the legal form is not
+# evidence about identity. The token sequences below are matched (lowercased,
+# punctuation-free — i.e. AFTER rapidfuzz's default_process, so "e.V." is
+# "e v", "S.p.A." is "s p a", "Sp. z o.o." is "sp z o o") and stripped from the
+# END of a name, repeatedly, never consuming the whole name. The fuzzy score is
+# then the max of the raw and the suffix-stripped comparison, so stripping can
+# only ever help.
+# ---------------------------------------------------------------------------
+_LEGAL_FORM_SEQUENCES: list[tuple[str, ...]] = [
+    tuple(form.split())
+    for form in (
+        # Germany / Austria / Switzerland
+        "gmbh co kg", "gmbh co kgaa", "gmbh u co kg", "ag co kg", "se co kgaa",
+        "ug haftungsbeschrankt", "ggmbh", "gmbh", "mbh", "kgaa", "ohg", "gbr",
+        "ag", "kg", "ug", "se", "e v", "ev", "e g", "e k", "ek",
+        # UK / US / IE / global English
+        "incorporated", "corporation", "company", "limited", "ltd", "plc",
+        "llp", "llc", "pllc", "inc", "corp", "lp", "pc", "co", "pty", "dac",
+        "clg", "ulc", "teo",
+        # France / Belgium / Luxembourg
+        "sasu", "sarl", "eurl", "sas", "snc", "sci", "scop", "sa",
+        # Spain / Portugal / Latin America
+        "sa de cv", "s de rl de cv", "sapi de cv", "slu", "sl", "ltda",
+        "eireli", "cia",
+        # Italy
+        "srls", "spa", "srl", "s p a", "s r l",
+        # Netherlands / Belgium
+        "bvba", "cvba", "vof", "nv", "bv", "cv",
+        # Nordics
+        "oyj", "oy ab", "oy", "ab", "asa", "aps", "a s", "k s", "ans", "abp",
+        "hb", "kb", "as",
+        # Poland / Czechia / Slovakia
+        "sp z o o", "sp z oo", "spzoo", "sp j", "sp k", "s r o", "sro",
+        "v o s",
+        # Hungary
+        "kft", "zrt", "nyrt", "bt", "kkt",
+        # Eastern Europe / CIS
+        "ooo", "oao", "zao", "pao", "tov", "d o o", "doo",
+        # Joint-stock / misc international
+        "pjsc", "cjsc", "jsc", "psc",
+        # Japan (romanised) / Asia-Pacific
+        "kabushiki kaisha", "godo kaisha", "yugen kaisha", "kk", "gk", "yk",
+        "pte ltd", "pte", "pvt", "sdn bhd", "sdn", "bhd",
+        # Trailing connectives left behind by the forms above ("X & Co.")
+        "und co", "and co", "et cie", "cie",
+    )
+]
+# Longest sequences first so "gmbh co kg" wins over "kg".
+_LEGAL_FORM_SEQUENCES.sort(key=len, reverse=True)
+
+
+def strip_legal_suffix(processed: str) -> str:
+    """Remove trailing legal-form token sequences from a default_process'd name.
+
+    Strips repeatedly ("... GmbH & Co. KG" loses "co kg" then "gmbh") but never
+    consumes the entire name, so a company literally named "AG" survives.
+    """
+    tokens = processed.split()
+    changed = True
+    while changed and tokens:
+        changed = False
+        for form in _LEGAL_FORM_SEQUENCES:
+            n = len(form)
+            if len(tokens) > n and tuple(tokens[-n:]) == form:
+                tokens = tokens[:-n]
+                changed = True
+                break
+    return " ".join(tokens)
+
 
 @dataclass(frozen=True)
 class Target:
@@ -126,9 +198,19 @@ def score_record(
     # RapidFuzz scorers return 0..100; normalize to 0..1. A missing/empty
     # name scores 0 (it can never match), which the gross filter will drop.
     if raw_name:
-        name_score = scorer(
+        raw_score = scorer(
             target.name, raw_name, processor=utils.default_process
         ) / 100.0
+        # Legal-form tolerance: also compare the suffix-stripped core names
+        # ("sinpex" vs "sinpex" for "Sinpex" / "Sinpex GmbH") and keep the
+        # better of the two scores — the legal form must never count against
+        # a match, in any jurisdiction (GmbH, Inc, e.V., S.p.A., Kft, …).
+        core_target = strip_legal_suffix(utils.default_process(target.name))
+        core_name = strip_legal_suffix(utils.default_process(raw_name))
+        core_score = (
+            scorer(core_target, core_name) / 100.0 if core_target and core_name else 0.0
+        )
+        name_score = max(raw_score, core_score)
     else:
         name_score = 0.0
 

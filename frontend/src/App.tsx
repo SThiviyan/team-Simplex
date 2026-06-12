@@ -92,6 +92,7 @@ export default function App() {
         <Results
           state={state}
           onRetry={() => state.kind === 'error' && runSearch(state.query)}
+          onSuggest={(name, juris) => runSearch(juris ? `${name}, ${juris}` : name)}
         />
         {showFlow && data ? (
           <FlowGraph data={data} queries={queries} onClose={() => setShowFlow(false)} />
@@ -133,7 +134,15 @@ function Header() {
   );
 }
 
-function Results({ state, onRetry }: { state: State; onRetry: () => void }) {
+function Results({
+  state,
+  onRetry,
+  onSuggest,
+}: {
+  state: State;
+  onRetry: () => void;
+  onSuggest: (name: string, jurisdiction: string | null) => void;
+}) {
   if (state.kind === 'idle') return <IdleState />;
   if (state.kind === 'loading') return <LoadingState />;
   if (state.kind === 'error') return <ErrorState message={state.message} onRetry={onRetry} />;
@@ -154,7 +163,7 @@ function Results({ state, onRetry }: { state: State; onRetry: () => void }) {
 
       <ul className="space-y-4">
         {state.winners.map((w) => (
-          <WinnerCard key={w.query_id} winner={w} />
+          <WinnerCard key={w.query_id} winner={w} onSuggest={onSuggest} />
         ))}
       </ul>
 
@@ -167,7 +176,13 @@ function Results({ state, onRetry }: { state: State; onRetry: () => void }) {
   );
 }
 
-function WinnerCard({ winner }: { winner: Winner }) {
+function WinnerCard({
+  winner,
+  onSuggest,
+}: {
+  winner: Winner;
+  onSuggest: (name: string, jurisdiction: string | null) => void;
+}) {
   const queryLabel = winner.jurisdiction
     ? `${winner.name} [${winner.jurisdiction}]`
     : winner.name;
@@ -175,26 +190,55 @@ function WinnerCard({ winner }: { winner: Winner }) {
   const pct = Math.round((winner.confidence ?? 0) * 100);
 
   if (winner.decision !== 'match' || !c) {
+    const suggested = winner.recursive_search?.suggested_query;
     return (
-      <li className="rounded-xl border border-line bg-paper px-4 py-4 space-y-2">
+      <li className="rounded-xl border border-line bg-paper px-4 py-4 space-y-3">
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-sm font-medium text-ink">{queryLabel}</span>
           <span className="font-mono text-[11px] uppercase tracking-wide text-muted">
-            {winner.decision === 'recursive_search' ? 'needs re-search' : 'no match'}
+            no match
           </span>
         </div>
-        {winner.decision === 'recursive_search' && winner.recursive_search ? (
-          <p className="text-[13px] text-ink">
-            Try searching for{' '}
-            <span className="font-semibold">
-              {winner.recursive_search.suggested_query}
+        {suggested ? (
+          /* Recursive search: one click re-runs the chain with the suggested
+             name + the same jurisdiction. No LLM commentary is shown. */
+          <button
+            type="button"
+            onClick={() => onSuggest(suggested, winner.jurisdiction)}
+            className="group flex w-full items-center justify-between gap-3 rounded-lg border border-accent/30 bg-accent-soft/30 px-3.5 py-2.5 text-left transition-colors hover:bg-accent-soft/60"
+          >
+            <span className="min-w-0">
+              <span className="block font-mono text-[10px] uppercase tracking-wide text-muted">
+                did you mean
+              </span>
+              <span className="block truncate text-[14px] font-semibold text-ink">
+                {suggested}
+                {winner.jurisdiction ? (
+                  <span className="ml-1.5 font-normal text-muted">[{winner.jurisdiction}]</span>
+                ) : null}
+              </span>
             </span>
-            .
-          </p>
-        ) : null}
-        {winner.reasoning ? (
-          <p className="text-[13px] text-muted text-balance">{winner.reasoning}</p>
-        ) : null}
+            <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-accent">
+              Search
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="transition-transform group-hover:translate-x-0.5"
+                aria-hidden
+              >
+                <path d="M5 12h14M13 6l6 6-6 6" />
+              </svg>
+            </span>
+          </button>
+        ) : (
+          <p className="text-[13px] text-muted">No registered entity found for this query.</p>
+        )}
       </li>
     );
   }

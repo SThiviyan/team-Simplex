@@ -218,27 +218,66 @@ function NodeCircle({
   );
 }
 
-// Curved S-arrow between two consecutive fathers, centered on the shared
-// horizontal node axis; the filtered-out count sits beneath the curve.
-function CurvedConnector({ drop }: { drop?: number }) {
+// A straight arrow whose shaft TAPERS: thin at the origin, growing thicker
+// toward the arrowhead, ending in a solid tip pointing at the target.
+function TaperedArrow({
+  x1,
+  y1,
+  x2,
+  y2,
+  w0 = 1.2,
+  w1 = 5,
+  headLen = 8,
+  color = '#BFB7A8',
+}: {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  w0?: number; // shaft width at the start
+  w1?: number; // shaft width at the arrowhead base
+  headLen?: number;
+  color?: string;
+}) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  // Unit perpendicular, for offsetting the shaft edges.
+  const px = -uy;
+  const py = ux;
+  // Base of the arrowhead.
+  const bx = x2 - ux * headLen;
+  const by = y2 - uy * headLen;
+  const shaft = [
+    `${x1 + (px * w0) / 2},${y1 + (py * w0) / 2}`,
+    `${bx + (px * w1) / 2},${by + (py * w1) / 2}`,
+    `${bx - (px * w1) / 2},${by - (py * w1) / 2}`,
+    `${x1 - (px * w0) / 2},${y1 - (py * w0) / 2}`,
+  ].join(' ');
+  const hw = Math.max(w1 * 2, 8); // head width
+  const head = [
+    `${bx + (px * hw) / 2},${by + (py * hw) / 2}`,
+    `${x2},${y2}`,
+    `${bx - (px * hw) / 2},${by - (py * hw) / 2}`,
+  ].join(' ');
+  return (
+    <g fill={color}>
+      <polygon points={shaft} />
+      <polygon points={head} />
+    </g>
+  );
+}
+
+// Straight tapered arrow between two consecutive fathers, centered on the
+// shared horizontal node axis; the filtered-out count sits beneath it.
+function Connector({ drop }: { drop?: number }) {
   const c = BAND / 2;
   return (
     <div className="flex shrink-0 flex-col items-center">
       <svg width="38" height={BAND} aria-hidden className="shrink-0">
-        <path
-          d={`M3 ${c} C 13 ${c + 12}, 21 ${c - 12}, 29 ${c}`}
-          fill="none"
-          stroke="#BFB7A8"
-          strokeWidth="1.4"
-        />
-        <path
-          d={`M25 ${c - 4.5} L31.5 ${c} L25 ${c + 4.5}`}
-          fill="none"
-          stroke="#BFB7A8"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+        <TaperedArrow x1={3} y1={c} x2={35} y2={c} />
       </svg>
       {drop != null && drop > 0 ? (
         <span className="mt-1 whitespace-nowrap font-mono text-[10px] text-muted">−{drop}</span>
@@ -247,27 +286,34 @@ function CurvedConnector({ drop }: { drop?: number }) {
   );
 }
 
-// Curved arrows fanning from the selected father down to its children.
+// Straight tapered arrows fanning from the selected father down to its
+// children. Drawn in a fixed 576-unit coordinate space matching the row's
+// max width (children are evenly flex-distributed).
+const FAN_W = 576;
+const FAN_H = 44;
+
 function ChildFan({ n }: { n: number }) {
   if (n === 0) return null;
   return (
     <svg
       className="block w-full"
-      height="38"
-      viewBox="0 0 100 38"
+      height={FAN_H}
+      viewBox={`0 0 ${FAN_W} ${FAN_H}`}
       preserveAspectRatio="none"
       aria-hidden
     >
       {Array.from({ length: n }, (_, i) => {
-        const x = ((i + 0.5) / n) * 100;
+        const x = ((i + 0.5) / n) * FAN_W;
         return (
-          <path
+          <TaperedArrow
             key={i}
-            d={`M50 1 C 50 20, ${x} 12, ${x} 37`}
-            fill="none"
-            stroke="#BFB7A8"
-            strokeWidth="1.3"
-            vectorEffect="non-scaling-stroke"
+            x1={FAN_W / 2}
+            y1={2}
+            x2={x}
+            y2={FAN_H - 2}
+            w0={1}
+            w1={4}
+            headLen={7}
           />
         );
       })}
@@ -427,7 +473,7 @@ function QueryFlow({ winner, query }: { winner: Winner; query?: QueryRow }) {
                       {s.sub}
                     </span>
                   </button>
-                  {i < stages.length - 1 ? <CurvedConnector drop={drops[i]} /> : null}
+                  {i < stages.length - 1 ? <Connector drop={drops[i]} /> : null}
                 </div>
               ))}
             </div>

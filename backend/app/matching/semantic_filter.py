@@ -96,18 +96,26 @@ Apply reasoning that pure string matching cannot:
      - 0.40-0.69: plausible but genuinely ambiguous.
      - 0.00-0.39: weak; likely not a real match.
 
-5. RECURSIVE TRIGGERING. If NONE of the candidates is the right entity, decide
-   between two outcomes:
-     - "no_match": the query is not a recognisable alias of anything, OR you have
-       no confident expansion to offer. Set confidence low.
-     - "recursive_search": the query IS a well-known acronym/alias, but its
-       expanded legal name is NOT present among the candidates. Provide the
-       expanded name in `suggested_query` so the pipeline can re-query the
-       registry. Example: query "BMW" with candidates that are all unrelated
-       small firms -> recursive_search, suggested_query "Bayerische Motoren Werke AG".
+5. RECURSIVE TRIGGERING. If NONE of the candidates is the right entity, STRONGLY
+   prefer "recursive_search" over "no_match": whenever you can think of a more
+   promising query — an expanded acronym, the native-language registered name, a
+   corrected spelling, or the well-known full legal name — return
+   "recursive_search" with that name in `suggested_query` so the pipeline can
+   re-query the registry with it. Examples:
+     - query "BMW", candidates all unrelated small firms
+       -> recursive_search, suggested_query "Bayerische Motoren Werke AG"
+     - query "Deutsche Bahn Cargo" with nothing matching
+       -> recursive_search, suggested_query "DB Cargo AG"
+   Use "no_match" ONLY when you genuinely have no better query to offer.
 
-You MUST respond by calling the `submit_evaluation` tool exactly once. Do not
-write any prose outside the tool call.
+6. ZERO CANDIDATES. The candidate list may be EMPTY (nothing survived the fuzzy
+   filter). If you recognise the query as a real company, return
+   "recursive_search" with its full registered legal name in the target
+   jurisdiction (native form, including the legal suffix). Otherwise "no_match".
+
+Keep `reasoning` to ONE short sentence — it is diagnostic metadata, never shown
+as an answer. You MUST respond by calling the `submit_evaluation` tool exactly
+once. Do not write any prose outside the tool call.
 """
 
 # Forced-tool schema. Because we set tool_choice to this tool, Claude is
@@ -357,12 +365,13 @@ def semantic_filter(
     SemanticFilterError
         On API failure, model refusal, or an unparseable/invalid response.
     """
-    if not fuzz_candidates:
-        # Nothing to evaluate — short-circuit without burning an API call.
-        return _empty_result("No candidates were provided by the fuzzy filter.")
-
     if mock:
+        # _mock_result falls back to no_match on an empty candidate list.
         return _mock_result(fuzz_candidates)
+
+    # NOTE: an EMPTY candidate list still goes to the LLM — that is the
+    # recursive case: "nothing survived; do you know a better query?" The model
+    # answers recursive_search + suggested_query when it recognises the name.
 
     if client is None:
         client = anthropic.Anthropic()
