@@ -1,4 +1,8 @@
-"""The "LLM/Claude eval" box — judges filtered candidates and produces the final row."""
+"""SUPERSEDED by app/matching/semantic_filter.py (LLM semantic filter).
+
+Kept for reference only — the unified pipeline (runner.py) routes the
+"LLM/Claude eval" box through the matching layer instead.
+"""
 
 import anthropic
 

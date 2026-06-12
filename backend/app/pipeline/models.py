@@ -10,12 +10,18 @@ class QueryRow(BaseModel):
 
 
 class McpServerEntry(BaseModel):
-    """One entry in a per-country ranked MCP server list (mocked via CSV)."""
+    """One entry in a per-country ranked MCP server list.
+
+    `url` is either an external MCP endpoint (`https://...`, optionally with an
+    auth token) or one of our own per-country endpoints (`internal:<bucket>`,
+    reached over the in-memory transport).
+    """
 
     rank: int
     name: str
     url: str
     notes: str = ""
+    auth_token: str = ""
 
     @property
     def is_placeholder(self) -> bool:
@@ -55,6 +61,9 @@ class ExtractionPayload(BaseModel):
     no_match_reason: str | None = Field(
         description="Only when registry_id is null: 'not_in_registry', 'ambiguous_candidates', 'out_of_scope', or another short snake_case label. Null on a match."
     )
+    reasoning: str = Field(
+        description="One or two sentences: why this confidence — what evidence supports (or fails to support) the match."
+    )
 
     def clamped_confidence(self) -> float:
         return max(0.0, min(1.0, self.confidence))
@@ -89,6 +98,7 @@ class ExtractionResult(BaseModel):
 class PipelineRunSummary(BaseModel):
     """Response of POST /api/pipeline/run."""
 
+    run_id: str
     rows_processed: int
     output_csv: str
     results: list[ExtractionResult]

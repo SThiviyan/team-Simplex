@@ -1,4 +1,8 @@
-"""Filtering — the "Python Per-processing" box between the agent's JSON and the Claude eval."""
+"""SUPERSEDED by app/matching/company_matcher.py (RapidFuzz gross filter).
+
+Kept for reference only — the unified pipeline (runner.py) routes the
+"Python Per-processing" box through the matching layer instead.
+"""
 
 from app.pipeline.models import ExtractionResult
 

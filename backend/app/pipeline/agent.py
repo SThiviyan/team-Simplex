@@ -1,63 +1,115 @@
 """Layer 1 — DB search agent.
 
-Walks the country's ranked MCP server list top to bottom. Each attempt is one
-Claude call wired to exactly one MCP server (so the ranking is honored); when
-no usable MCP is configured for the country, the agent falls back to a single
-web-search call. Structured JSON output is enforced via output_config.
+Walks the country's ranked MCP server list top to bottom; per entry the Claude
+agent connects to that MCP endpoint (in-memory for our per-country buckets,
+streamable HTTP for external servers), discovers its tools, and runs a tool-use
+loop to find the registry entry. Every tool result is captured as a trace —
+both as evidence for the grounding check (an ID the tools never returned is
+blanked, never submitted) and as record material for the matching layer.
+
+When a country's MCP attempts yield nothing usable, a single web-search call is
+the fallback. Structured JSON output is enforced via output_config throughout.
 """
 
 import logging
+import re
+from dataclasses import dataclass, field
 
 import anthropic
 
 from app.config import settings
+from app.pipeline import event_log
+from app.pipeline.mcp_client import anthropic_tools, call_tool, open_session
 from app.pipeline.models import ExtractionPayload, ExtractionResult, McpServerEntry, QueryRow
 
 logger = logging.getLogger(__name__)
 
 MAX_PAUSE_TURN_CONTINUATIONS = 5
+MAX_TOOL_ROUNDS = 8
 
 # no_match_reason prefix marking "the pipeline errored", as opposed to a genuine
 # registry no-match (not_in_registry / ambiguous_candidates / out_of_scope).
 LAYER1_ERROR_PREFIX = "layer1_error"
+UNGROUNDED_REASON = "ungrounded_registry_id"
 
 _OUTPUT_FORMAT = {
     "type": "json_schema",
     "schema": ExtractionPayload.model_json_schema(),
 }
 
-_SYSTEM = """You are a company-registry research agent in a KYC pipeline.
+_SYSTEM = """You are a company-registry research agent in a KYB pipeline.
 
 Given a company name and a country code, find the company's official commercial-register
-entry and extract the requested fields. Use the tools available to you to look the company
-up; do not answer from memory alone. Prefer official registries (Handelsregister,
-Companies House, national registers) over secondary sources.
+entry using the search tools available to you. Do not answer from memory alone.
 
-Rules:
-- registry_id: the official registration number from the relevant registry, exactly as registered.
-- registry_court: the specific court or registry office (required for DE, AT, etc. — e.g.
-  'Amtsgericht München').
-- name_normalized_register_name: the FULL legal name as registered (e.g. 'Sinpex GmbH',
+Search strategy — input names are messy (partial, abbreviated, transliterated, trading
+names, sometimes a wrong jurisdiction):
+- Start with the name as given. If results are poor, reformulate and retry: strip or
+  append legal forms (GmbH, AG, Ltd, plc, S.A., ...), expand known abbreviations
+  (e.g. BMW -> Bayerische Motoren Werke), try transliteration variants.
+- If the registry evidence points to a different jurisdiction than requested, say so via
+  jurisdiction_confirmed rather than forcing a match.
+
+Sub-jurisdictional structure:
+- Germany/Austria: registration numbers are only unique per court — always capture the
+  Registergericht/Firmenbuchgericht (registry_court). HRA = partnerships/sole traders,
+  HRB = corporations (GmbH, AG).
+- USA: companies register per state (Secretary of State); there is no federal registry.
+- Canada: federal plus provincial registries; UAE: emirate-level registries.
+
+Sole proprietors / freelancers: in many places (UK sole traders, Irish sole traders,
+Spanish autónomos, US sole proprietors) the correct answer is NO registry entry — return
+null fields with no_match_reason 'not_in_registry'. Others DO register them (Poland
+CEIDG, France SIREN, Czech Živnostenský rejstřík, Belgium KBO/BCE).
+
+Output rules:
+- registry_id: the official registration number EXACTLY as a tool result returned it.
+  NEVER write a registration number that did not literally appear in a tool result —
+  an invented ID is the worst possible answer; a blank one is neutral.
+- registry_court: the specific court or registry office (required for DE, AT, etc.).
+- name_normalized_register_name: the FULL legal name as registered ('Sinpex GmbH',
   not 'Sinpex').
 - jurisdiction_confirmed: the confirmed country or state/province, only if the registry
   evidence confirms it; else null.
-- confidence: a number in [0, 1] reflecting how sure you are. It is used for calibration
-  scoring — be honest. Only go above 0.8 when registry_id and the registered name both
-  clearly match the queried company.
-- source: at least one citable URL or registry document reference supporting the answer.
-- If you cannot find a confident match, set registry_id and the other data fields to null
-  and set no_match_reason to one of: 'not_in_registry' (the company is not in this
-  registry), 'ambiguous_candidates' (multiple plausible entries, cannot decide),
-  'out_of_scope' (the query is not a registrable company / not answerable here), or
-  another short snake_case label if none of these fit.
-- Respond with the JSON object only."""
+- confidence: a number in [0, 1], used for calibration scoring — be honest. Only go
+  above 0.8 when registry_id and the registered name both clearly match the query.
+- source: at least one citable URL or registry document reference from the tool results.
+- If there is no confident match, set the data fields to null and no_match_reason to:
+  'not_in_registry', 'ambiguous_candidates', 'out_of_scope', or another short
+  snake_case label.
+- reasoning: one or two sentences on why this confidence.
+- After your final tool call, respond with the JSON object only."""
+
+
+@dataclass
+class Layer1Outcome:
+    """Everything Layer 1 produced for one query."""
+
+    candidates: list[ExtractionResult] = field(default_factory=list)
+    records: list[dict] = field(default_factory=list)  # matching-layer shaped
+    trace: list[dict] = field(default_factory=list)  # tool calls + outputs
+    errors: list[str] = field(default_factory=list)
+
+    def error_result(self, query_id: str) -> ExtractionResult | None:
+        if self.candidates or not self.errors:
+            return None
+        return ExtractionResult(
+            query_id=query_id,
+            confidence=0.0,
+            no_match_reason=f"{LAYER1_ERROR_PREFIX}: {'; '.join(self.errors)}",
+        )
+
+
+def _client() -> anthropic.AsyncAnthropic:
+    # 529/overload storms pass within seconds — retry hard instead of giving up.
+    return anthropic.AsyncAnthropic(max_retries=8)
 
 
 def _user_prompt(query: QueryRow, via: str) -> str:
     return (
         f"Company name (search query): {query.name}\n"
         f"Country code (jurisdiction): {query.jurisdiction}\n"
-        f"Look this company up via: {via}"
+        f"You are connected to: {via}"
     )
 
 
@@ -70,6 +122,7 @@ def _mock_payload(query: QueryRow) -> ExtractionPayload:
         confidence=0.9,
         source="mock://pipeline",
         no_match_reason=None,
+        reasoning="mock mode",
     )
 
 
@@ -78,95 +131,235 @@ def _extract_payload(response) -> ExtractionPayload:
     return ExtractionPayload.model_validate_json(text)
 
 
-async def _attempt(
+def _match_record(query_id: str, r: dict) -> dict | None:
+    """SearchResult dump (from an MCP tool result) -> matching-layer record."""
+    name = r.get("register_name") or r.get("title")
+    if not name:
+        return None
+    return {
+        "query_id": query_id,
+        "registry_id": r.get("registry_id"),
+        "registry_court": r.get("registry_court"),
+        "name_normalized_register_name": name,
+        "jurisdiction_confirmed": r.get("jurisdiction"),
+        "confidence": float(r.get("score") or 0.0),
+        "source": r.get("url") or r.get("source"),
+        "no_match_reason": None,
+        "provider": r.get("source"),
+        "snippet": r.get("snippet"),
+    }
+
+
+def _records_from_structured(query_id: str, structured) -> list[dict]:
+    """Pull company records out of a tool's structured output."""
+    if isinstance(structured, dict):
+        items = structured.get("results") or structured.get("result") or []
+    elif isinstance(structured, list):
+        items = structured
+    else:
+        items = []
+    records = []
+    for item in items:
+        if isinstance(item, dict):
+            rec = _match_record(query_id, item)
+            if rec:
+                records.append(rec)
+    return records
+
+
+_ALNUM = re.compile(r"[^a-z0-9]")
+
+
+def _grounded(registry_id: str, trace: list[dict]) -> bool:
+    """True iff the registry_id literally appeared in some tool output."""
+    needle = _ALNUM.sub("", registry_id.lower())
+    if not needle:
+        return False
+    for entry in trace:
+        haystack = _ALNUM.sub("", str(entry.get("output", "")).lower())
+        if needle in haystack:
+            return True
+    return False
+
+
+def apply_grounding(
+    payload: ExtractionPayload, trace: list[dict], *, web_search: bool = False
+) -> tuple[ExtractionPayload, bool]:
+    """Blank an ID the tools never returned. Web-search results can't be checked
+    against a trace (the search runs server-side), so they pass through."""
+    if web_search or not payload.registry_id or _grounded(payload.registry_id, trace):
+        return payload, True
+    blanked = payload.model_copy(
+        update={
+            "registry_id": None,
+            "registry_court": None,
+            "name_normalized_register_name": None,
+            "jurisdiction_confirmed": None,
+            "confidence": 0.0,
+            "source": None,
+            "no_match_reason": UNGROUNDED_REASON,
+            "reasoning": f"Blanked: claimed registry_id {payload.registry_id!r} "
+            "does not appear in any tool result. " + payload.reasoning,
+        }
+    )
+    return blanked, False
+
+
+async def _mcp_attempt(
     client: anthropic.AsyncAnthropic,
     query: QueryRow,
-    *,
-    mcp: McpServerEntry | None,
+    entry: McpServerEntry,
+    outcome: Layer1Outcome,
+    run_id: str,
 ) -> ExtractionPayload | None:
-    """One extraction attempt — against a single MCP server, or web search if mcp is None."""
-    via = f"the MCP server '{mcp.name}'" if mcp else "web search"
-    messages = [{"role": "user", "content": _user_prompt(query, via)}]
+    """One extraction attempt against a single MCP endpoint, with tool loop."""
+    async with open_session(entry.url, entry.auth_token or None) as session:
+        tools = anthropic_tools(await session.list_tools())
+        await event_log.log_event(
+            run_id, "mcp_connected", query.query_id,
+            endpoint=entry.url, server=entry.name, tools=[t["name"] for t in tools],
+        )
+        messages = [{"role": "user", "content": _user_prompt(query, f"MCP server '{entry.name}'")}]
 
-    for _ in range(MAX_PAUSE_TURN_CONTINUATIONS):
-        if mcp:
-            response = await client.beta.messages.create(
-                model=settings.anthropic_model,
-                max_tokens=16000,
-                system=_SYSTEM,
-                messages=messages,
-                mcp_servers=[{"type": "url", "name": mcp.name, "url": mcp.url}],
-                output_config={"format": _OUTPUT_FORMAT},
-                betas=["mcp-client-2025-11-20"],
-            )
-        else:
+        for _ in range(MAX_TOOL_ROUNDS):
             response = await client.messages.create(
                 model=settings.anthropic_model,
                 max_tokens=16000,
                 system=_SYSTEM,
                 messages=messages,
-                tools=[{"type": "web_search_20260209", "name": "web_search"}],
+                tools=tools,
                 output_config={"format": _OUTPUT_FORMAT},
             )
 
-        if response.stop_reason == "pause_turn":
-            # Server-side tool loop paused — append the assistant turn and resume.
-            messages = messages[:1] + [{"role": "assistant", "content": response.content}]
-            continue
-        if response.stop_reason == "refusal":
-            logger.warning("attempt via %s refused for query %s", via, query.query_id)
-            return None
-        return _extract_payload(response)
+            if response.stop_reason == "refusal":
+                await event_log.log_event(run_id, "error", query.query_id, kind="refusal")
+                return None
 
-    logger.warning("attempt via %s exceeded pause_turn budget for query %s", via, query.query_id)
+            tool_uses = [b for b in response.content if b.type == "tool_use"]
+            if response.stop_reason == "tool_use" and tool_uses:
+                messages.append({"role": "assistant", "content": response.content})
+                tool_results = []
+                for block in tool_uses:
+                    await event_log.log_event(
+                        run_id, "tool_call", query.query_id,
+                        endpoint=entry.url, tool=block.name, arguments=block.input,
+                    )
+                    text, structured = await call_tool(session, block.name, dict(block.input))
+                    records = _records_from_structured(query.query_id, structured)
+                    outcome.records.extend(records)
+                    outcome.trace.append(
+                        {"endpoint": entry.url, "tool": block.name,
+                         "input": block.input, "output": text}
+                    )
+                    await event_log.log_event(
+                        run_id, "tool_result", query.query_id,
+                        tool=block.name, record_count=len(records),
+                        top_hits=[r["name_normalized_register_name"] for r in records[:3]],
+                    )
+                    tool_results.append(
+                        {"type": "tool_result", "tool_use_id": block.id, "content": text}
+                    )
+                messages.append({"role": "user", "content": tool_results})
+                continue
+
+            return _extract_payload(response)
+
+    logger.warning("MCP attempt for %s exceeded tool-round budget", query.query_id)
     return None
 
 
-async def run_layer1(query: QueryRow, mcps: list[McpServerEntry]) -> list[ExtractionResult]:
-    """Walk the ranked MCP list top to bottom; collect candidate extractions."""
+async def _web_search_attempt(
+    client: anthropic.AsyncAnthropic, query: QueryRow, run_id: str
+) -> ExtractionPayload | None:
+    """Fallback: one server-side web-search call (no MCP endpoint usable)."""
+    await event_log.log_event(run_id, "web_search_fallback", query.query_id)
+    messages = [{"role": "user", "content": _user_prompt(query, "web search")}]
+
+    for _ in range(MAX_PAUSE_TURN_CONTINUATIONS):
+        response = await client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=16000,
+            system=_SYSTEM,
+            messages=messages,
+            tools=[{"type": "web_search_20260209", "name": "web_search"}],
+            output_config={"format": _OUTPUT_FORMAT},
+        )
+        if response.stop_reason == "pause_turn":
+            messages = messages[:1] + [{"role": "assistant", "content": response.content}]
+            continue
+        if response.stop_reason == "refusal":
+            await event_log.log_event(run_id, "error", query.query_id, kind="refusal")
+            return None
+        return _extract_payload(response)
+
+    logger.warning("web-search attempt for %s exceeded pause_turn budget", query.query_id)
+    return None
+
+
+async def run_layer1(query: QueryRow, mcps: list[McpServerEntry], run_id: str) -> Layer1Outcome:
+    """Walk the ranked MCP list top to bottom; collect candidates + evidence."""
+    outcome = Layer1Outcome()
+
     if settings.pipeline_mock:
-        return [ExtractionResult.from_payload(query.query_id, _mock_payload(query))]
+        payload = _mock_payload(query)
+        outcome.candidates.append(ExtractionResult.from_payload(query.query_id, payload))
+        await event_log.log_event(
+            run_id, "agent_answer", query.query_id,
+            confidence=payload.confidence, reasoning=payload.reasoning, mock=True,
+        )
+        return outcome
 
-    client = anthropic.AsyncAnthropic()
-    usable_mcps = [m for m in mcps if not m.is_placeholder]
-    results: list[ExtractionResult] = []
-    errors: list[str] = []
+    client = _client()
+    usable = [m for m in mcps if not m.is_placeholder]
 
-    attempts: list[McpServerEntry | None] = usable_mcps or [None]  # None = web-search fallback
-    for mcp in attempts:
-        via = f"mcp:{mcp.name}" if mcp else "web_search"
+    for entry in usable:
+        await event_log.log_event(
+            run_id, "mcp_selected", query.query_id,
+            country=query.jurisdiction, endpoint=entry.url, rank=entry.rank,
+        )
         try:
-            payload = await _attempt(client, query, mcp=mcp)
+            payload = await _mcp_attempt(client, query, entry, outcome, run_id)
         except Exception as exc:
-            # An MCP/tool failure must not kill the run — move down the list,
-            # same philosophy as FederatedSearch's non-fatal provider errors.
-            logger.exception("attempt failed for query %s (via %s)", query.query_id, via)
-            errors.append(f"{via}: {type(exc).__name__}: {str(exc)[:120]}")
+            logger.exception("MCP attempt failed for %s via %s", query.query_id, entry.url)
+            outcome.errors.append(f"{entry.name}: {type(exc).__name__}: {str(exc)[:120]}")
+            await event_log.log_event(
+                run_id, "error", query.query_id, kind=type(exc).__name__, endpoint=entry.url
+            )
             continue
         if payload is None:
             continue
 
-        result = ExtractionResult.from_payload(query.query_id, payload)
-        results.append(result)
+        payload, grounded = apply_grounding(payload, outcome.trace)
+        await event_log.log_event(
+            run_id, "grounding_check", query.query_id,
+            registry_id=payload.registry_id, grounded=grounded,
+        )
+        await event_log.log_event(
+            run_id, "agent_answer", query.query_id,
+            registry_id=payload.registry_id, confidence=payload.clamped_confidence(),
+            reasoning=payload.reasoning, endpoint=entry.url,
+        )
+        outcome.candidates.append(ExtractionResult.from_payload(query.query_id, payload))
 
-        if result.confidence >= settings.confidence_threshold:
-            break  # early exit — skip lower-ranked MCPs
+        if payload.clamped_confidence() >= settings.confidence_threshold:
+            return outcome  # early exit — skip lower-ranked MCPs
 
-        # TODO (architecture: 'Recursive' arrow): re-enter the agent here with a
-        # refined query (e.g. normalized name from the low-confidence result).
-
-    # TODO (architecture: Layer 2 - detailed query): once Layer 1 has confirmed the
-    # entity, kick off the detailed-query layer here.
-
-    if not results and errors:
-        # Every attempt died on an exception (API overload, auth, network, ...).
-        # Surface that instead of letting it masquerade as "no match found".
-        return [
-            ExtractionResult(
-                query_id=query.query_id,
-                confidence=0.0,
-                no_match_reason=f"{LAYER1_ERROR_PREFIX}: {'; '.join(errors)}",
+    # Web-search fallback: nothing usable came out of the MCP walk.
+    if not outcome.candidates and not outcome.records:
+        try:
+            payload = await _web_search_attempt(client, query, run_id)
+        except Exception as exc:
+            logger.exception("web-search fallback failed for %s", query.query_id)
+            outcome.errors.append(f"web_search: {type(exc).__name__}: {str(exc)[:120]}")
+            await event_log.log_event(run_id, "error", query.query_id, kind=type(exc).__name__)
+            payload = None
+        if payload is not None:
+            payload, _ = apply_grounding(payload, outcome.trace, web_search=True)
+            await event_log.log_event(
+                run_id, "agent_answer", query.query_id,
+                registry_id=payload.registry_id, confidence=payload.clamped_confidence(),
+                reasoning=payload.reasoning, endpoint="web_search",
             )
-        ]
+            outcome.candidates.append(ExtractionResult.from_payload(query.query_id, payload))
 
-    return results
+    return outcome

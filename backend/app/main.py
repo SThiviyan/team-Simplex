@@ -1,3 +1,4 @@
+import contextlib
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -9,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.mcp_servers.country_endpoints import country_servers
 
 # NOTE: app.pipeline.* is imported lazily inside the /api/pipeline handlers, not
 # here. The pipeline pulls in `anthropic`; keeping it out of module scope means a
@@ -17,6 +19,22 @@ from app.search.csv_search import csv_search
 from app.search.orchestrator import FederatedSearch
 from app.search.resolver import CompanyResolver
 from app.search.sources import all_providers
+
+
+# The per-country MCP endpoints (/mcp/<bucket>) need their streamable-HTTP
+# session managers running. run() is one-shot per server instance, so start
+# them once per process and keep them alive (lifespans re-enter under tests).
+_mcp_sessions_started = False
+_mcp_session_stack = contextlib.AsyncExitStack()
+
+
+async def _ensure_mcp_session_managers() -> None:
+    global _mcp_sessions_started
+    if _mcp_sessions_started:
+        return
+    _mcp_sessions_started = True
+    for server in country_servers().values():
+        await _mcp_session_stack.enter_async_context(server.session_manager.run())
 
 
 @asynccontextmanager
@@ -31,6 +49,7 @@ async def lifespan(app: FastAPI):
     )
     # /api/resolve does jurisdiction-aware gather + cross-reference.
     app.state.resolver = CompanyResolver(providers)
+    await _ensure_mcp_session_managers()
     yield
 
 
@@ -139,6 +158,33 @@ async def pipeline_run(req: PipelineRunRequest | None = None):
     return await run_pipeline(queries=queries, limit=req.limit)
 
 
+@app.get("/api/pipeline/runs")
+async def pipeline_runs(limit: int = Query(default=20, ge=1, le=100)):
+    """Recent pipeline runs + status — entry point for the live-status UI."""
+    from app.pipeline import event_log
+
+    return {"runs": event_log.list_runs(limit=limit)}
+
+
+@app.get("/api/pipeline/runs/{run_id}/events")
+async def pipeline_run_events(
+    run_id: str,
+    after: int = Query(default=0, ge=0, description="Return events with seq > after"),
+    limit: int = Query(default=1000, ge=1, le=5000),
+):
+    """Incremental event feed for one run: every agent action with its reasoning
+    (tool calls, grounding checks, eval decisions, confidence rationale). The UI
+    polls with the last seen `seq` as `after` to render a live agent view."""
+    from app.pipeline import event_log
+
+    events = event_log.list_events(run_id, after=after, limit=limit)
+    return {
+        "run_id": run_id,
+        "events": events,
+        "last_seq": events[-1]["seq"] if events else after,
+    }
+
+
 @app.post("/api/pipeline/run-csv")
 async def pipeline_run_csv(file: UploadFile) -> FileResponse:
     """Eligibility gate: upload the test CSV, get the result CSV back — no manual steps.
@@ -160,6 +206,13 @@ async def pipeline_run_csv(file: UploadFile) -> FileResponse:
     summary = await run_pipeline(queries=queries)
     output = Path(summary.output_csv)
     return FileResponse(output, media_type="text/csv", filename=output.name)
+
+
+# Per-country MCP endpoints: /mcp/de, /mcp/us, ..., /mcp/global. The pipeline
+# agent connects to the bucket matching the query's country code; deployed,
+# these are also reachable by external MCP clients.
+for _bucket, _server in country_servers().items():
+    app.mount(f"/mcp/{_bucket}", _server.streamable_http_app())
 
 
 # Serve built frontend at / (after `npm run build` populates frontend/dist).

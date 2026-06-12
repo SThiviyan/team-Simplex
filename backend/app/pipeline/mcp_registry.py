@@ -30,11 +30,32 @@ def _read_csv_skipping_comments(path: Path) -> list[dict[str, str]]:
 
 
 def get_mcp_servers(country_code: str) -> list[McpServerEntry]:
-    """Return the ranked MCP server list for a country code, best rank first."""
-    filename = _COUNTRY_FILES.get(country_code.strip().upper(), _FALLBACK_FILE)
+    """Return the ranked MCP server list for a country code, best rank first.
+
+    CSV entries (external/remote MCPs, team-curated) come first by rank. Our own
+    per-country endpoint (`internal:<bucket>`) is always appended as the baseline
+    so every country has a working MCP endpoint — the correct national bucket
+    when we have providers for it, the global bucket (GLEIF/Wikidata) otherwise.
+    """
+    from app.mcp_servers.country_endpoints import bucket_for_country
+
+    cc = country_code.strip().upper()
+    filename = _COUNTRY_FILES.get(cc.split("-")[0], _FALLBACK_FILE)
     path = MCP_DIR / filename
-    if not path.is_file():
-        return []
-    entries = [McpServerEntry(**row) for row in _read_csv_skipping_comments(path)]
-    entries.sort(key=lambda e: e.rank)
+    entries: list[McpServerEntry] = []
+    if path.is_file():
+        entries = [McpServerEntry(**row) for row in _read_csv_skipping_comments(path)]
+        entries.sort(key=lambda e: e.rank)
+
+    bucket = bucket_for_country(cc)
+    internal_url = f"internal:{bucket}"
+    if not any(e.url == internal_url for e in entries):
+        entries.append(
+            McpServerEntry(
+                rank=(entries[-1].rank + 1) if entries else 1,
+                name=f"company-registry-{bucket}",
+                url=internal_url,
+                notes="built-in per-country MCP endpoint",
+            )
+        )
     return entries
