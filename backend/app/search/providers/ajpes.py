@@ -39,9 +39,14 @@ class AjpesSearchProvider(SearchProvider):
     enabled = True
 
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
-        user, password = settings.ajpes_user, settings.ajpes_password
-        if not user or not password:
-            # No credentials configured — the provider disables itself cleanly.
+        user, password, schema = (
+            settings.ajpes_user,
+            settings.ajpes_password,
+            settings.ajpes_schema,
+        )
+        # AJPES requires all three (it rejects a request with an empty `shema`),
+        # so the provider stays disabled until the full credential set is present.
+        if not user or not password or not schema:
             return []
         try:
             rows = await ajpes.find_entities(
