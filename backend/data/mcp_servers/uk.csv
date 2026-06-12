@@ -1,0 +1,6 @@
+# Ranked list of viable MCP servers for jurisdiction UK/GB.
+# Mocks the future DB ("Listen an Quellen"). The agent walks this list top to bottom (by rank).
+# URLs containing `example.invalid` are PLACEHOLDERS — the agent skips them and falls
+# back to web search. Replace with real MCP endpoints as they become available.
+rank;name;url;notes
+1;companies-house-mcp;https://mcp.example.invalid/companies-house;PLACEHOLDER — replace with real Companies House MCP URL

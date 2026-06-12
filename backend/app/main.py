@@ -1,9 +1,15 @@
+import os
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
+from app.config import settings
+from app.pipeline.models import PipelineRunSummary, QueryRow
+from app.pipeline.runner import run_pipeline
 from app.search.orchestrator import FederatedSearch
 from app.search.providers.stub import StubSearchProvider
 
@@ -36,6 +42,45 @@ async def search(
 ):
     results = await app.state.search.search(q, limit=limit)
     return {"query": q, "count": len(results), "results": results}
+
+
+class PipelineQuery(BaseModel):
+    """A single search input: search query (name) + country code (jurisdiction)."""
+
+    query_id: str | None = None
+    name: str
+    jurisdiction: str
+
+
+class PipelineRunRequest(BaseModel):
+    query: PipelineQuery | None = Field(
+        default=None, description="Run a single ad-hoc input instead of the batch CSV"
+    )
+    limit: int | None = Field(
+        default=None, ge=1, description="Only process the first N rows of the batch CSV"
+    )
+
+
+@app.post("/api/pipeline/run")
+async def pipeline_run(req: PipelineRunRequest | None = None) -> PipelineRunSummary:
+    """Run the registry-lookup chain: per-country MCP list -> agent -> filter -> Claude eval -> CSV."""
+    if not settings.pipeline_mock and not os.environ.get("ANTHROPIC_API_KEY"):
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY is not set (and PIPELINE_MOCK is off) — add it to .env",
+        )
+
+    req = req or PipelineRunRequest()
+    queries = None
+    if req.query is not None:
+        queries = [
+            QueryRow(
+                query_id=req.query.query_id or f"adhoc-{uuid.uuid4().hex[:8]}",
+                name=req.query.name,
+                jurisdiction=req.query.jurisdiction,
+            )
+        ]
+    return await run_pipeline(queries=queries, limit=req.limit)
 
 
 # Serve built frontend at / (after `npm run build` populates frontend/dist).

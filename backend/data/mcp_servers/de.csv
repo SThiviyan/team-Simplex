@@ -1,0 +1,7 @@
+# Ranked list of viable MCP servers for jurisdiction DE.
+# Mocks the future DB ("Listen an Quellen"). The agent walks this list top to bottom (by rank).
+# URLs containing `example.invalid` are PLACEHOLDERS — the agent skips them and falls
+# back to web search. Replace with real MCP endpoints as they become available.
+rank;name;url;notes
+1;handelsregister-mcp;https://mcp.example.invalid/handelsregister;PLACEHOLDER — replace with real Handelsregister MCP URL
+2;unternehmensregister-mcp;https://mcp.example.invalid/unternehmensregister;PLACEHOLDER — replace with real Unternehmensregister MCP URL

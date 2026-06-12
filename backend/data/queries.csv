@@ -1,0 +1,6 @@
+# Batch input — mocks the future query DB. Columns: query_id;name;jurisdiction
+query_id;name;jurisdiction
+Q-001;Siemens Aktiengesellschaft;DE
+Q-002;Rolls-Royce Holdings plc;UK
+Q-003;Nestlé S.A.;CH
+Q-004;Muster Maschinenbau GmbH;DE
