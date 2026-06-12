@@ -10,7 +10,7 @@ async def test_tools_registered():
 
 def test_list_sources_covers_all_with_jurisdictions():
     by = {s["name"]: s["jurisdictions"] for s in cr.list_sources()}
-    assert len(by) == 10
+    assert len(by) == 12
     # Global sources have no jurisdiction restriction.
     assert by["gleif"] is None and by["wikidata"] is None
     # National registers are jurisdiction-scoped.
@@ -19,3 +19,5 @@ def test_list_sources_covers_all_with_jurisdictions():
     assert by["brreg"] == ["NO"]
     assert by["sec"] == ["US"]
     assert by["prh"] == ["FI"]
+    assert by["nzbn"] == ["NZ"]
+    assert by["ajpes"] == ["SI"]
