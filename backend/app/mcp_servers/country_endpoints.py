@@ -118,9 +118,12 @@ def server_for_bucket(bucket: str) -> FastMCP | None:
 
 def bucket_for_country(country_code: str | None) -> str:
     """Country code -> bucket label; falls back to the global bucket."""
+    from app.search.base import normalize_country
+
     cc = (country_code or "").strip().upper()
-    # State/province inputs like "US-CA" route to the parent country's bucket.
-    base = cc.split("-")[0]
+    # State/province inputs like "US-CA" route to the parent country's bucket;
+    # aliases like "UK" resolve to the ISO code ("GB") before routing.
+    base = normalize_country(cc.split("-")[0]) or ""
     servers = country_servers()
     if base.lower() in servers:
         return base.lower()

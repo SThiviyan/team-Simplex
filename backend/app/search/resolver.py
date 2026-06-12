@@ -155,6 +155,9 @@ class CompanyResolver:
         self.providers = providers
 
     async def resolve(self, query: str, jurisdiction: str | None = None, limit: int = 10) -> dict:
+        from app.search.base import normalize_country
+
+        jurisdiction = normalize_country(jurisdiction)  # "UK" -> "GB" etc.
         selected = select_providers(self.providers, jurisdiction)
 
         batches = await asyncio.gather(

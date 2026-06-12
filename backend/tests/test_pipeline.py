@@ -60,6 +60,36 @@ def test_mcp_registry_routes_to_internal_endpoints():
     assert get_mcp_servers("CH")[-1].url == "internal:global"
 
 
+async def test_country_alias_normalization():
+    from app.search.base import SearchProvider, SearchResult, normalize_country
+    from app.search.csv_search import parse_query_csv, search_jurisdiction
+
+    assert normalize_country("uk") == "GB"
+    assert normalize_country("UK") == "GB"
+    assert normalize_country("EL") == "GR"
+    assert normalize_country("DE") == "DE"
+    assert normalize_country("  ") is None
+
+    # Trailing-jurisdiction detection accepts the alias too.
+    assert parse_query_csv("Tesco UK") == [("Tesco", "GB")]
+
+    # The jurisdiction filter keeps GB records when the user typed "UK".
+    class StubProvider(SearchProvider):
+        name = "stub"
+        jurisdictions = None
+
+        async def search(self, query, limit=10):
+            return [
+                SearchResult(
+                    title="TESCO PLC", snippet="", score=0.9, source="stub",
+                    jurisdiction="GB", registry_id="00445790",
+                )
+            ]
+
+    results, called, _ = await search_jurisdiction([StubProvider()], "Tesco", "UK", 10)
+    assert len(results) == 1 and results[0].jurisdiction == "GB"
+
+
 def test_grounding_blanks_unbacked_registry_ids():
     from app.pipeline.agent import UNGROUNDED_REASON, apply_grounding
 

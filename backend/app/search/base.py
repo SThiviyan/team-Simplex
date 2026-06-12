@@ -2,6 +2,19 @@ from abc import ABC, abstractmethod
 
 from pydantic import BaseModel, Field
 
+# Country codes people commonly type vs. the ISO 3166-1 alpha-2 codes the
+# registries actually report. Without this, "Tesco, UK" filters out every GB
+# record and returns nothing.
+COUNTRY_ALIASES = {"UK": "GB", "EL": "GR"}
+
+
+def normalize_country(code: str | None) -> str | None:
+    """Uppercase + resolve common aliases (UK -> GB). None/blank stays None."""
+    if not code or not code.strip():
+        return None
+    cc = code.strip().upper()
+    return COUNTRY_ALIASES.get(cc, cc)
+
 
 class SearchResult(BaseModel):
     title: str

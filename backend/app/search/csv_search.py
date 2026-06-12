@@ -16,7 +16,7 @@ import json
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from app.search.base import SearchProvider, SearchResult
+from app.search.base import SearchProvider, SearchResult, normalize_country
 from app.search.resolver import _normalise
 
 # Lands at backend/search_results.json — inside the bind-mounted repo, so it
@@ -54,7 +54,7 @@ def _split_trailing_jurisdiction(name: str, juris: str | None) -> tuple[str, str
     parts = name.rsplit(None, 1)
     if len(parts) == 2:
         head, tail = parts
-        code = tail.upper()
+        code = normalize_country(tail)  # accepts aliases like "UK" too
         if code in _ISO_ALPHA2 and code not in _LEGAL_FORM_CODES:
             return head.strip(), code
     return name, juris
@@ -109,6 +109,7 @@ async def search_jurisdiction(
     """Route by jurisdiction, query the relevant sources, filter, and report
     which sources were called vs skipped. Shared by the API and the MCP server.
     """
+    jurisdiction = normalize_country(jurisdiction)  # "UK" -> "GB" etc.
     selected = select_providers(providers, jurisdiction)
     skipped = [p.name for p in providers if p not in selected]
     results = await _gather(selected, name, jurisdiction, limit)
