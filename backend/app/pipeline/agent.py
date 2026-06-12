@@ -41,6 +41,32 @@ _OUTPUT_FORMAT = {
     "schema": ExtractionPayload.model_json_schema(),
 }
 
+# Prompt cache (5-min TTL): the system prompt + tool schemas are identical for
+# every round of every row, so one breakpoint on the system block makes each
+# call after the first read that prefix from cache. Responses are unaffected.
+_CACHE = {"type": "ephemeral"}
+
+
+def _system_blocks() -> list[dict]:
+    return [{"type": "text", "text": _SYSTEM, "cache_control": _CACHE}]
+
+
+def _move_conversation_breakpoint(messages: list[dict]) -> None:
+    """Keep exactly one moving cache breakpoint on the newest tool_result block
+    (so each round re-reads the growing conversation from cache instead of
+    re-processing it). Older breakpoints are removed — the API allows max 4."""
+    last = None
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                block.pop("cache_control", None)
+                last = block
+    if last is not None:
+        last["cache_control"] = _CACHE
+
 _SYSTEM = """You are a company-registry research agent in a KYB pipeline.
 
 Given a company name and a country code, find the company's official commercial-register
@@ -67,14 +93,26 @@ null fields with no_match_reason 'not_in_registry'. Others DO register them (Pol
 CEIDG, France SIREN, Czech Živnostenský rejstřík, Belgium KBO/BCE).
 
 Output rules:
-- registry_id: the official registration number EXACTLY as a tool result returned it.
-  NEVER write a registration number that did not literally appear in a tool result —
-  an invented ID is the worst possible answer; a blank one is neutral.
+- registry_id: the official NATIONAL registration number EXACTLY as a tool result
+  returned it. NEVER write a registration number that did not literally appear in a
+  tool result — an invented ID is the worst possible answer; a blank one is neutral.
+- NOT registry numbers (never put these in registry_id): an LEI (20-char GLEIF code),
+  a Wikidata QID, an SEC CIK, a stock ticker. GLEIF results carry the entity's real
+  national number as 'national registry number' / registered_as — use THAT. If the
+  only identifier the tools returned is an LEI/QID/CIK, registry_id stays null.
 - registry_court: the specific court or registry office (required for DE, AT, etc.).
 - name_normalized_register_name: the FULL legal name as registered ('Sinpex GmbH',
   not 'Sinpex').
 - jurisdiction_confirmed: the confirmed country or state/province, only if the registry
-  evidence confirms it; else null.
+  evidence confirms it; else null. Use the country code at the same granularity as the
+  request (DE, not DE-BY) — sub-national codes like US-CA only where companies register
+  at state/province level (USA, Canada).
+- If several DISTINCT legal entities match the query equally well and nothing in the
+  query disambiguates them, do not pick one: no_match_reason 'ambiguous_candidates'.
+- Tier A/B enrichment (registered_address, incorporation_date, organization_type,
+  status, officers): fill ONLY values that literally appear in the tool results for
+  THIS entity — wrong enrichment is penalized, blank is neutral. Dates as YYYY-MM-DD.
+  status as one of: active / dissolved / in_liquidation / dormant. Null when unknown.
 - confidence: a number in [0, 1], used for calibration scoring — be honest. Only go
   above 0.8 when registry_id and the registered name both clearly match the query.
 - source: at least one citable URL or registry document reference from the tool results.
@@ -115,8 +153,10 @@ def _client() -> anthropic.AsyncAnthropic:
     loop_id = id(asyncio.get_running_loop())
     client = _clients.get(loop_id)
     if client is None:
-        # 529/overload storms pass within seconds — retry hard, don't give up.
-        client = anthropic.AsyncAnthropic(max_retries=8)
+        # 4 retries (~30s of backoff) balances riding out brief 529 blips
+        # against stalling a row for minutes: on a sustained storm we fail
+        # over to record salvage / web search instead of retrying forever.
+        client = anthropic.AsyncAnthropic(max_retries=4)
         _clients[loop_id] = client
     return client
 
@@ -138,6 +178,11 @@ def _mock_payload(query: QueryRow) -> ExtractionPayload:
         confidence=0.9,
         source="mock://pipeline",
         no_match_reason=None,
+        registered_address=None,
+        incorporation_date=None,
+        organization_type=None,
+        status=None,
+        officers=None,
         reasoning="mock mode",
     )
 
@@ -163,6 +208,12 @@ def _match_record(query_id: str, r: dict) -> dict | None:
         "no_match_reason": None,
         "provider": r.get("source"),
         "snippet": r.get("snippet"),
+        # Tier A material + cross-reference codes for the Layer-2 enrichment.
+        "address": r.get("address"),
+        "organization_type": r.get("organization_type"),
+        "status": r.get("status"),
+        "last_update": r.get("last_update"),
+        "metadata": r.get("metadata") or {},
     }
 
 
@@ -184,6 +235,26 @@ def _records_from_structured(query_id: str, structured) -> list[dict]:
 
 
 _ALNUM = re.compile(r"[^a-z0-9]")
+
+# Identifier shapes that are real codes but NOT company registration numbers.
+# They appear in tool output, so grounding alone cannot catch them.
+NON_REGISTRY_REASON = "non_registry_identifier"
+_NON_REGISTRY_ID_SHAPES = [
+    # LEI: 4-char prefix, "00" reserved chars, 12 alnum, 2 check digits.
+    ("lei", re.compile(r"^[A-Z0-9]{4}00[A-Z0-9]{12}\d{2}$")),
+    ("wikidata_qid", re.compile(r"^Q\d{1,10}$")),
+    # SEC CIK as EDGAR renders it: 10 digits, zero-padded. (National numbers
+    # like UK '00445790' are 8-9 digits, so they don't match.)
+    ("sec_cik", re.compile(r"^0\d{9}$")),
+]
+
+
+def _non_registry_id_kind(registry_id: str) -> str | None:
+    value = registry_id.strip().upper().replace(" ", "")
+    for kind, pattern in _NON_REGISTRY_ID_SHAPES:
+        if pattern.match(value):
+            return kind
+    return None
 
 
 def _grounded(registry_id: str, trace: list[dict]) -> bool:
@@ -221,6 +292,21 @@ def apply_grounding(
 ) -> tuple[ExtractionPayload, bool]:
     """Blank an ID the tools never returned. Web-search results can't be checked
     against a trace (the search runs server-side), so they pass through."""
+    # Wrong identifier TYPE (LEI / QID / CIK) is checked regardless of transport:
+    # these are grounded in tool/web output but are not registration numbers.
+    kind = _non_registry_id_kind(payload.registry_id) if payload.registry_id else None
+    if kind:
+        return payload.model_copy(
+            update={
+                "registry_id": None,
+                "registry_court": None,
+                "confidence": 0.0,
+                "source": None,
+                "no_match_reason": NON_REGISTRY_REASON,
+                "reasoning": f"Blanked: {payload.registry_id!r} is a {kind}, not a company "
+                "registration number. " + payload.reasoning,
+            }
+        ), False
     if web_search:
         return payload, True
     if not payload.registry_id or _grounded(payload.registry_id, trace):
@@ -241,6 +327,38 @@ def apply_grounding(
     return blanked, False
 
 
+PREGATHER_TOOL = "search_companies"
+
+
+async def _pregather(session, query, entry, outcome, run_id, tools) -> str | None:
+    """Run the obvious first search deterministically, before any model call.
+
+    Round 0 used to be a forced tool-use turn whose only job was asking for
+    this exact search — one full Opus round-trip spent on a foregone
+    conclusion. The output lands in the trace, so grounding sees it exactly
+    as if the agent had requested it."""
+    if not any(t["name"] == PREGATHER_TOOL for t in tools):
+        return None
+    args = {"name": query.name, "limit": 10}
+    try:
+        text, structured = await call_tool(session, PREGATHER_TOOL, args)
+    except Exception:
+        return None  # endpoint hiccup — fall back to the forced agent search
+    if structured is None and text.startswith("Tool error"):
+        return None
+    records = _records_from_structured(query.query_id, structured)
+    outcome.records.extend(records)
+    outcome.trace.append(
+        {"endpoint": entry.url, "tool": PREGATHER_TOOL, "input": args, "output": text}
+    )
+    await event_log.log_event(
+        run_id, "tool_result", query.query_id,
+        tool=PREGATHER_TOOL, record_count=len(records), pregather=True,
+        top_hits=[r["name_normalized_register_name"] for r in records[:3]],
+    )
+    return text
+
+
 async def _mcp_attempt(
     client: anthropic.AsyncAnthropic,
     query: QueryRow,
@@ -255,19 +373,30 @@ async def _mcp_attempt(
             run_id, "mcp_connected", query.query_id,
             endpoint=entry.url, server=entry.name, tools=[t["name"] for t in tools],
         )
-        messages = [{"role": "user", "content": _user_prompt(query, f"MCP server '{entry.name}'")}]
+        pregathered = await _pregather(session, query, entry, outcome, run_id, tools)
+        user = _user_prompt(query, f"MCP server '{entry.name}'")
+        if pregathered is not None:
+            user += (
+                f"\n\n{PREGATHER_TOOL} has already been called with the name as given; "
+                f"its results:\n{pregathered}\n\n"
+                "If these results already identify the registry entry, answer directly. "
+                "Search again (reformulated name, legal-form variants, single sources) "
+                "only if they do not."
+            )
+        messages = [{"role": "user", "content": user}]
 
         for round_idx in range(MAX_TOOL_ROUNDS):
             kwargs: dict = dict(
                 model=settings.anthropic_model,
                 max_tokens=16000,
-                system=_SYSTEM,
+                system=_system_blocks(),
                 messages=messages,
                 tools=tools,
             )
-            if round_idx == 0:
-                # The agent MUST search before answering — an un-searched answer
-                # is ungrounded by construction and would only get blanked.
+            if round_idx == 0 and pregathered is None:
+                # No pre-gathered evidence: the agent MUST search before
+                # answering — an un-searched answer is ungrounded by
+                # construction and would only get blanked.
                 kwargs["tool_choice"] = {"type": "any"}
             else:
                 kwargs["output_config"] = {"format": _OUTPUT_FORMAT}
@@ -280,13 +409,18 @@ async def _mcp_attempt(
             tool_uses = [b for b in response.content if b.type == "tool_use"]
             if response.stop_reason == "tool_use" and tool_uses:
                 messages.append({"role": "assistant", "content": response.content})
-                tool_results = []
                 for block in tool_uses:
                     await event_log.log_event(
                         run_id, "tool_call", query.query_id,
                         endpoint=entry.url, tool=block.name, arguments=block.input,
                     )
-                    text, structured = await call_tool(session, block.name, dict(block.input))
+                # The model fans out independent searches in one round — run
+                # them concurrently; results still attach by tool_use_id.
+                outputs = await asyncio.gather(
+                    *(call_tool(session, b.name, dict(b.input)) for b in tool_uses)
+                )
+                tool_results = []
+                for block, (text, structured) in zip(tool_uses, outputs):
                     records = _records_from_structured(query.query_id, structured)
                     outcome.records.extend(records)
                     outcome.trace.append(
@@ -302,6 +436,7 @@ async def _mcp_attempt(
                         {"type": "tool_result", "tool_use_id": block.id, "content": text}
                     )
                 messages.append({"role": "user", "content": tool_results})
+                _move_conversation_breakpoint(messages)
                 continue
 
             return _extract_payload(response)
@@ -321,7 +456,7 @@ async def _web_search_attempt(
         response = await client.messages.create(
             model=settings.anthropic_model,
             max_tokens=16000,
-            system=_SYSTEM,
+            system=_system_blocks(),
             messages=messages,
             tools=[{"type": "web_search_20260209", "name": "web_search"}],
             output_config={"format": _OUTPUT_FORMAT},

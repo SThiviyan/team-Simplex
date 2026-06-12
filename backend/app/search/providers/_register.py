@@ -28,6 +28,10 @@ def rows_to_results(rows: list[dict], source: str, limit: int) -> list[SearchRes
                 registry_id=str(num) if num else None,
                 registry_court=r.get("court"),
                 register_name=name,
+                address=r.get("address"),
+                organization_type=r.get("legal_form"),
+                status=r.get("status"),
+                incorporation_date=r.get("incorporation_date"),
             )
         )
     return results

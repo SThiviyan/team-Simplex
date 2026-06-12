@@ -160,6 +160,11 @@ def test_grounding_blanks_unbacked_registry_ids():
         confidence=0.95,
         source="https://example.com",
         no_match_reason=None,
+        registered_address=None,
+        incorporation_date=None,
+        organization_type=None,
+        status=None,
+        officers=None,
         reasoning="looks right",
     )
     trace = [{"tool": "search_companies", "output": '{"results": [{"registry_id": "HRB 1234"}]}'}]
@@ -186,6 +191,11 @@ def test_grounding_replaces_fabricated_source_urls():
         confidence=0.9,
         source="https://made-up.example/echt-gmbh",
         no_match_reason=None,
+        registered_address=None,
+        incorporation_date=None,
+        organization_type=None,
+        status=None,
+        officers=None,
         reasoning="match",
     )
     trace = [{"tool": "search_companies", "output": '{"results": [{"registry_id": "HRB 1234"}]}'}]
@@ -292,6 +302,8 @@ async def test_agent_first_round_forces_tool_use(monkeypatch):
             "name_normalized_register_name": None, "jurisdiction_confirmed": None,
             "confidence": 0.0, "source": None,
             "no_match_reason": "not_in_registry", "reasoning": "test",
+            "registered_address": None, "incorporation_date": None,
+            "organization_type": None, "status": None, "officers": None,
         }
     )
 
@@ -424,7 +436,10 @@ async def test_recursion_reenters_layer1(monkeypatch, mock_mode):
 
     assert gathered_names == ["BMW", "Bayerische Motoren Werke"]  # one recursion round
     assert result.registry_id == "HRB 42243"
-    assert result.confidence == 0.93
+    # Layer 2 calibration: a single-source (non-registry-provider) ID is capped
+    # at the 'probable' ceiling and flagged as such.
+    assert result.confidence_flag == "probable"
+    assert result.confidence == 0.85
 
 
 async def test_matching_path_runs_and_logs_filter_stats(mock_mode, monkeypatch):
@@ -472,11 +487,11 @@ async def test_pipeline_mock_end_to_end(mock_mode, tmp_path):
     assert summary.run_id
     assert all(r.confidence > 0 for r in summary.results)
 
-    # Output is a clean comma-delimited CSV: header + one row per query, no comments.
+    # Output is a clean semicolon-delimited CSV: header + one row per query, no comments.
     with open(summary.output_csv, encoding="utf-8") as f:
         lines = f.read().splitlines()
     assert not any(line.startswith("#") for line in lines)
-    rows = list(csv.DictReader(lines))
+    rows = list(csv.DictReader(lines, delimiter=";"))
     assert list(rows[0].keys()) == RESULT_COLUMNS
     assert len(rows) == 2
     assert rows[0]["query_id"] == "Q-001"
@@ -536,7 +551,7 @@ def test_run_csv_upload_endpoint(mock_mode):
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/csv")
 
-    rows = list(csv.DictReader(resp.text.splitlines()))
+    rows = list(csv.DictReader(resp.text.splitlines(), delimiter=";"))
     assert list(rows[0].keys()) == RESULT_COLUMNS
     assert [r["query_id"] for r in rows] == ["p001", "p002"]
 
@@ -575,3 +590,149 @@ def test_run_csv_upload_rejects_garbage(mock_mode):
     with TestClient(app) as client:
         resp = client.post("/api/pipeline/run-csv", files={"file": ("x.csv", b"", "text/csv")})
     assert resp.status_code == 400
+
+
+def test_grounding_blanks_non_registry_identifier_shapes():
+    """LEI / Wikidata QID / SEC CIK are grounded in tool output but are not
+    registration numbers — they must be blanked with their own reason."""
+    from app.pipeline.agent import NON_REGISTRY_REASON, apply_grounding
+
+    def payload_with(rid):
+        return ExtractionPayload(
+            registry_id=rid,
+            registry_court=None,
+            name_normalized_register_name="Some AG",
+            jurisdiction_confirmed="DE",
+            confidence=0.9,
+            source="https://example.org",
+            no_match_reason=None,
+            registered_address=None,
+            incorporation_date=None,
+            organization_type=None,
+            status=None,
+            officers=None,
+            reasoning="r",
+        )
+
+    for bad in ("2138002P5RNKC5W2JZ46", "Q552581", "0000320193"):
+        trace = [{"tool": "search_companies", "output": f'{{"id": "{bad}"}}'}]
+        blanked, grounded = apply_grounding(payload_with(bad), trace)
+        assert not grounded, bad
+        assert blanked.registry_id is None
+        assert blanked.no_match_reason == NON_REGISTRY_REASON
+        assert blanked.confidence == 0.0
+        # Also caught on the web-search path, where trace grounding is skipped.
+        blanked_web, grounded_web = apply_grounding(
+            payload_with(bad), [], web_search=True
+        )
+        assert not grounded_web and blanked_web.registry_id is None
+
+    # Real registration numbers of similar flavours must pass.
+    for good in ("HRB 1234", "CHE-105.909.036", "00445790", "FN 56247t", "0112038-9"):
+        trace = [{"tool": "search_companies", "output": f'{{"id": "{good}"}}'}]
+        kept, grounded = apply_grounding(payload_with(good), trace)
+        assert grounded and kept.registry_id == good, good
+
+
+async def test_salvage_records_when_agent_call_dies(monkeypatch, mock_mode):
+    """A 529-killed agent must not discard gathered records: the matching layer
+    runs over them instead of emitting a layer1_error row."""
+    from app.pipeline import runner
+    from app.pipeline.agent import Layer1Outcome
+
+    records = [
+        {
+            "query_id": "q1",
+            "registry_id": "HRB 6684",
+            "registry_court": "Amtsgericht München",
+            "name_normalized_register_name": "Siemens Aktiengesellschaft",
+            "jurisdiction_confirmed": "DE",
+            "confidence": 0.95,
+            "source": "https://www.handelsregister.de",
+            "no_match_reason": None,
+            "provider": "handelsregister",
+            "snippet": None,
+        }
+    ]
+
+    async def dead_agent(query, mcps, run_id):
+        return Layer1Outcome(candidates=[], records=records, errors=["boom: 529"])
+
+    monkeypatch.setattr(runner, "run_layer1", dead_agent)
+    query = QueryRow(query_id="q1", name="Siemens", jurisdiction="DE")
+    result = await runner.process_query(query, run_id="test-salvage")
+
+    assert not (result.no_match_reason or "").startswith("layer1_error")
+    assert result.query_id == "q1"
+
+
+async def test_error_row_still_returned_without_records(monkeypatch):
+    from app.pipeline import runner
+    from app.pipeline.agent import Layer1Outcome
+
+    async def dead_agent(query, mcps, run_id):
+        return Layer1Outcome(candidates=[], records=[], errors=["boom: 529"])
+
+    monkeypatch.setattr(runner, "run_layer1", dead_agent)
+    query = QueryRow(query_id="q2", name="Siemens", jurisdiction="DE")
+    result = await runner.process_query(query, run_id="test-salvage")
+    assert (result.no_match_reason or "").startswith("layer1_error")
+
+
+async def test_rate_limited_get_spaces_requests_and_retries_429():
+    import httpx
+
+    from app.integrations import http as http_helpers
+
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"})
+        return httpx.Response(200, json={"ok": True})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    http_helpers._throttles.pop("test-throttle", None)
+    resp = await http_helpers.rate_limited_get(
+        "test-throttle", client, "https://x.invalid/a", min_interval=0.01
+    )
+    assert resp.status_code == 200 and calls["n"] == 2  # 429 retried once
+
+    # Spacing: two immediate requests must be >= min_interval apart.
+    import time
+
+    t0 = time.monotonic()
+    await http_helpers.rate_limited_get(
+        "test-throttle", client, "https://x.invalid/b", min_interval=0.05
+    )
+    await http_helpers.rate_limited_get(
+        "test-throttle", client, "https://x.invalid/c", min_interval=0.05
+    )
+    assert time.monotonic() - t0 >= 0.05
+    await client.aclose()
+
+
+def test_match_without_id_gets_reason_and_loses_to_grounded_agent():
+    from app.pipeline.enrichment import names_agree as _names_agree
+    from app.pipeline.runner import _result_from_match
+
+    match = {
+        "decision": "match",
+        "confidence": 1.0,
+        "winning_candidate": {
+            "registry_id": None,
+            "registry_court": None,
+            "name_normalized_register_name": "Tesco",
+            "jurisdiction_confirmed": "GB",
+            "source": "wikidata",
+        },
+    }
+    row = _result_from_match(QueryRow(query_id="q", name="Tesco", jurisdiction="UK"), match)
+    assert row.registry_id is None
+    assert row.no_match_reason == "id_not_in_sources"  # blank ID always says why
+
+    assert _names_agree("Tesco", "TESCO PLC")
+    assert _names_agree("Heineken N.V.", "heineken n.v.")
+    assert not _names_agree("Tesco", "Shopify Inc.")
+    assert not _names_agree(None, "Tesco")

@@ -2,8 +2,10 @@
 
 Input: delimiter is auto-detected (comma or semicolon), so both the judges' test
 CSV and German-Excel exports parse without manual steps.
-Output: clean comma-delimited CSV, header + one row per query — machine-readable
-for scoring (no comment lines; uncertainty lives in confidence/no_match_reason).
+Output: clean semicolon-delimited CSV (the convention German-locale Excel and
+the provided reference files use; addresses contain commas, so ';' also keeps
+columns visually intact), header + one row per query — machine-readable for
+scoring (no comment lines; uncertainty lives in confidence/no_match_reason).
 """
 
 import csv
@@ -17,6 +19,7 @@ QUERIES_CSV = DATA_DIR / "queries.csv"
 OUTPUT_DIR = DATA_DIR / "output"
 
 RESULT_COLUMNS = list(ExtractionResult.model_fields)
+OUTPUT_DELIMITER = ";"
 
 
 def _detect_delimiter(header_line: str) -> str:
@@ -48,7 +51,7 @@ def write_results(results: list[ExtractionResult], output_dir: Path = OUTPUT_DIR
     path = output_dir / f"results_{datetime.now():%Y%m%d_%H%M%S}.csv"
 
     with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=RESULT_COLUMNS)
+        writer = csv.DictWriter(f, fieldnames=RESULT_COLUMNS, delimiter=OUTPUT_DELIMITER)
         writer.writeheader()
         for r in results:
             writer.writerow(r.model_dump())

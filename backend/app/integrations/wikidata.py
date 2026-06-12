@@ -117,3 +117,77 @@ async def search_entities(name: str, limit: int = 10) -> list[dict]:
         if len(out) >= min(max(limit, 1), 50):
             break
     return out
+
+
+# Properties for the Layer-2 enrichment of an already-identified company.
+# P571 inception, P1454 legal form, P159 headquarters location, P6375 street
+# address, P576 dissolved/abolished, P169 CEO, P112 founder, P488 chairperson.
+_DETAIL_SPARQL = """
+SELECT ?inception ?legalFormLabel ?hqLabel ?street ?dissolved ?ceoLabel ?founderLabel ?chairLabel WHERE {{
+  OPTIONAL {{ wd:{qid} wdt:P571 ?inception . }}
+  OPTIONAL {{ wd:{qid} wdt:P1454 ?legalForm . }}
+  OPTIONAL {{ wd:{qid} wdt:P159 ?hq .
+             OPTIONAL {{ wd:{qid} p:P159 ?hqStmt . ?hqStmt pq:P6375 ?street . }} }}
+  OPTIONAL {{ wd:{qid} wdt:P576 ?dissolved . }}
+  OPTIONAL {{ wd:{qid} wdt:P169 ?ceo . }}
+  OPTIONAL {{ wd:{qid} wdt:P112 ?founder . }}
+  OPTIONAL {{ wd:{qid} wdt:P488 ?chair . }}
+  SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,mul". }}
+}}
+LIMIT 5
+"""
+
+
+def _first(bindings: list[dict], key: str) -> str | None:
+    for b in bindings:
+        value = (b.get(key) or {}).get("value")
+        if value:
+            return value
+    return None
+
+
+def _collect(bindings: list[dict], key: str) -> list[str]:
+    seen: list[str] = []
+    for b in bindings:
+        value = (b.get(key) or {}).get("value")
+        if value and value not in seen:
+            seen.append(value)
+    return seen
+
+
+async def entity_details(qid: str) -> dict:
+    """Tier A/B facts for one company item, straight from its Wikidata claims.
+
+    Returns a dict with any of: incorporation_date (ISO date), organization_type,
+    address, status ('dissolved' only — Wikidata has no positive 'active' claim),
+    officers ('role: name; ...'). Keys with no data are absent.
+    """
+    qid = qid.strip().upper()
+    if not qid.startswith("Q") or not qid[1:].isdigit():
+        return {}
+    data = await run_sparql(_DETAIL_SPARQL.format(qid=qid))
+    bindings = data.get("results", {}).get("bindings", [])
+    if not bindings:
+        return {}
+
+    out: dict = {}
+    inception = _first(bindings, "inception")
+    if inception:
+        out["incorporation_date"] = inception[:10]  # xsd:dateTime -> YYYY-MM-DD
+    legal_form = _first(bindings, "legalFormLabel")
+    if legal_form:
+        out["organization_type"] = legal_form
+    street, hq = _first(bindings, "street"), _first(bindings, "hqLabel")
+    address = ", ".join(p for p in (street, hq if hq != street else None) if p)
+    if address:
+        out["address"] = address
+    if _first(bindings, "dissolved"):
+        out["status"] = "dissolved"
+    officers = [
+        f"{role}: {name}"
+        for role, key in (("CEO", "ceoLabel"), ("founder", "founderLabel"), ("chair", "chairLabel"))
+        for name in _collect(bindings, key)
+    ]
+    if officers:
+        out["officers"] = "; ".join(officers)
+    return out

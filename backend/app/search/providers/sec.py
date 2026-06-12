@@ -15,4 +15,12 @@ class SecSearchProvider(SearchProvider):
             rows = await sec.search_companies(query, limit)
         except Exception:
             return []
-        return rows_to_results(rows, self.name, limit)
+        results = rows_to_results(rows, self.name, limit)
+        # A CIK is an SEC filing index key, not a company registration number —
+        # US companies register at state level (Secretary of State). Surface the
+        # CIK as metadata/evidence, never as registry_id.
+        for r in results:
+            if r.registry_id:
+                r.metadata = {**r.metadata, "cik": r.registry_id}
+                r.registry_id = None
+        return results

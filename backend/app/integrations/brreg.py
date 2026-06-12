@@ -23,6 +23,10 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
     for e in data.get("_embedded", {}).get("enheter", []):
         addr = e.get("forretningsadresse") or e.get("postadresse") or {}
         num = e.get("organisasjonsnummer")
+        street = ", ".join(line for line in (addr.get("adresse") or []) if line)
+        full_address = ", ".join(
+            part for part in (street, addr.get("postnummer"), addr.get("poststed"), "NO") if part
+        )
         out.append(
             {
                 "number": num,
@@ -32,6 +36,9 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
                 "status": "slettet" if e.get("slettedato") else None,
                 "country": "NO",
                 "url": f"{WEB}/{num}" if num else None,
+                "address": full_address or None,
+                "incorporation_date": e.get("stiftelsesdato")
+                or e.get("registreringsdatoIEnhetsregisteret"),
             }
         )
     return out

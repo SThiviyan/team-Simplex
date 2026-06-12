@@ -23,6 +23,7 @@ def _score(query: str, name: str | None, rank: int) -> float:
 def _snippet(e: dict) -> str:
     place = ", ".join(p for p in (e.get("city"), e.get("country")) if p)
     bits = [
+        f"national registry number {e['registered_as']}" if e.get("registered_as") else None,
         f"LEI {e['lei']}" if e.get("lei") else None,
         e.get("entity_status"),
         place or None,
@@ -55,11 +56,23 @@ class GleifSearchProvider(SearchProvider):
                     score=_score(query, e.get("name"), i),
                     source=self.name,
                     jurisdiction=e.get("country"),
-                    registry_id=e.get("lei"),
+                    # The NATIONAL registry number, not the LEI: an LEI is a
+                    # cross-reference code, never the official registration
+                    # number the output schema asks for. LEI lives in metadata.
+                    registry_id=e.get("registered_as"),
                     register_name=e.get("name"),
                     last_update=e.get("last_update"),
                     address=e.get("address"),
                     organization_type=e.get("organization_type"),
+                    status=e.get("entity_status"),
+                    metadata={
+                        k: v
+                        for k, v in (
+                            ("lei", e.get("lei")),
+                            ("registration_authority", e.get("registration_authority")),
+                        )
+                        if v
+                    },
                 )
             )
         return results

@@ -44,6 +44,7 @@ class HandelsregisterSearchProvider(SearchProvider):
                     registry_id=reg,
                     registry_court=court,
                     register_name=r["name"],
+                    status=r.get("status"),
                 )
             )
         return results

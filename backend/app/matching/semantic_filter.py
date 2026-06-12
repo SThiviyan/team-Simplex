@@ -393,7 +393,11 @@ def semantic_filter(
         message = client.with_options(timeout=timeout).messages.create(
             model=model,
             max_tokens=max_tokens,
-            system=SYSTEM_PROMPT,
+            # Static across every row of a batch — one cache breakpoint lets
+            # rows after the first read system + tool schema from cache.
+            system=[
+                {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
+            ],
             tools=[EVALUATION_TOOL],
             # Force the tool: the model must return submit_evaluation arguments,
             # guaranteeing a schema-shaped response with no prose to parse.

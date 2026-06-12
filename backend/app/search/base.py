@@ -36,6 +36,8 @@ class SearchResult(BaseModel):
     last_update: str | None = None       # when the source's data was last updated
     address: str | None = None           # registered address of the company
     organization_type: str | None = None  # legal form / organization type (e.g. GmbH)
+    status: str | None = None            # company status as the source reports it
+    incorporation_date: str | None = None  # registration/founding date when reported
     # Per-source signals the resolver can rank on, e.g. {"sitelinks": 87}.
     metadata: dict = Field(default_factory=dict)
 

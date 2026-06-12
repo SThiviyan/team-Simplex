@@ -18,6 +18,7 @@ from pathlib import Path
 from app.config import settings
 from app.pipeline import csv_io, event_log
 from app.pipeline.agent import run_layer1
+from app.pipeline.enrichment import enrich_result, names_agree
 from app.pipeline.mcp_registry import get_mcp_servers
 from app.pipeline.models import ExtractionResult, PipelineRunSummary, QueryRow
 
@@ -45,9 +46,13 @@ def _result_from_match(query: QueryRow, match: dict) -> ExtractionResult:
             jurisdiction_confirmed=winner.get("jurisdiction_confirmed"),
             confidence=_clamp(match.get("confidence")),
             source=winner.get("source"),
-            no_match_reason=None,
+            # The output contract: a blank registry_id always says why. The
+            # entity was identified, but no source exposed its register number.
+            no_match_reason=None if winner.get("registry_id") else "id_not_in_sources",
         )
-    label = "ambiguous_candidates" if match.get("candidates") else "not_in_registry"
+    # "no_match_in_sources" ≠ "not_in_registry": the first says OUR sources had
+    # nothing usable; only the agent (with evidence) may claim the second.
+    label = "ambiguous_candidates" if match.get("candidates") else "no_match_in_sources"
     return ExtractionResult(
         query_id=query.query_id, confidence=_clamp(match.get("confidence")), no_match_reason=label
     )
@@ -65,7 +70,7 @@ async def _run_matching(query: QueryRow, records: list[dict], run_id: str) -> di
         records,
         query.name,
         query.jurisdiction or "",
-        model=settings.anthropic_model,
+        model=settings.matching_model,
         mock=mock,
     )
     await event_log.log_event(
@@ -86,12 +91,28 @@ async def _run_matching(query: QueryRow, records: list[dict], run_id: str) -> di
 
 
 async def process_query(query: QueryRow, run_id: str) -> ExtractionResult:
+    """Layer 1 decides WHICH entity; Layer 2 enriches it (Tier A/B) and stamps
+    the calibration verdict (confidence_flag + caps). Every row goes through
+    enrichment so blanks are marked and confidence is consistent."""
+    row, records = await _decide(query, run_id)
+    return await enrich_result(query, row, records, run_id)
+
+
+async def _decide(query: QueryRow, run_id: str) -> tuple[ExtractionResult, list[dict]]:
     mcps = get_mcp_servers(query.jurisdiction)
     outcome = await run_layer1(query, mcps, run_id)
 
     error_row = outcome.error_result(query.query_id)
     if error_row is not None:
-        return error_row
+        # The agent call died (e.g. a 529 storm outlasting all retries) — but
+        # the tool results it gathered first are still valid evidence. Salvage
+        # them through the matching layer instead of discarding the row.
+        if not outcome.records:
+            return error_row, []
+        await event_log.log_event(
+            run_id, "records_salvaged", query.query_id,
+            record_count=len(outcome.records), errors=outcome.errors[:3],
+        )
 
     best = max(outcome.candidates, key=lambda c: c.confidence, default=None)
 
@@ -106,8 +127,8 @@ async def process_query(query: QueryRow, run_id: str) -> ExtractionResult:
     if single_clear_answer or not outcome.records:
         if best is None:
             return ExtractionResult(
-                query_id=query.query_id, confidence=0.0, no_match_reason="not_in_registry"
-            )
+                query_id=query.query_id, confidence=0.0, no_match_reason="no_match_in_sources"
+            ), outcome.records
         await event_log.log_event(
             run_id, "eval_skipped", query.query_id,
             reason="single grounded high-confidence candidate"
@@ -115,7 +136,7 @@ async def process_query(query: QueryRow, run_id: str) -> ExtractionResult:
             else "no gathered records to re-evaluate",
             confidence=best.confidence,
         )
-        return best
+        return best, outcome.records
 
     # Matching layer: RapidFuzz gross filter + LLM semantic filter over the
     # records the agent's MCP tool calls returned.
@@ -150,17 +171,25 @@ async def process_query(query: QueryRow, run_id: str) -> ExtractionResult:
 
     final = _result_from_match(query, match)
 
-    # Don't let the matcher bury a grounded agent answer it merely couldn't
-    # corroborate: prefer the stronger of the two on a non-match decision.
+    # Don't let the matcher bury a grounded agent answer. Two cases:
+    # - matcher confirmed the SAME entity but its winner carries no registry
+    #   number (e.g. a Wikidata record): the agent's grounded ID row is
+    #   strictly more complete — confidence comparison doesn't apply;
+    # - matcher couldn't corroborate at all: prefer the stronger of the two.
     if final.registry_id is None and best is not None and best.registry_id:
-        if best.confidence > final.confidence:
+        same_entity_no_id = match.get("decision") == "match" and names_agree(
+            final.name_normalized_register_name, best.name_normalized_register_name
+        )
+        if same_entity_no_id or best.confidence > final.confidence:
             await event_log.log_event(
                 run_id, "agent_override", query.query_id,
                 agent_confidence=best.confidence, matcher_confidence=final.confidence,
+                reason="matcher winner lacks registry_id for the same entity"
+                if same_entity_no_id else "agent answer stronger than non-match",
             )
-            return best
+            return best, records
 
-    return final
+    return final, records
 
 
 async def _process_guarded(

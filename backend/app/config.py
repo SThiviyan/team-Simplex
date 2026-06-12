@@ -17,7 +17,12 @@ class Settings(BaseSettings):
     # --- Pipeline (registry-lookup agent chain) ---
     # The Anthropic SDK reads ANTHROPIC_API_KEY from the environment itself.
     anthropic_model: str = Field(
-        default="claude-opus-4-8", description="Model for the Layer-1 agent and the eval step"
+        default="claude-opus-4-8", description="Model for the Layer-1 research agent"
+    )
+    matching_model: str = Field(
+        default="claude-sonnet-4-6",
+        description="Model for the matching-layer semantic filter — a constrained forced-tool "
+        "classification where a faster tier holds up (gated on the practice-set score)",
     )
     pipeline_mock: bool = Field(
         default=False,
@@ -28,8 +33,10 @@ class Settings(BaseSettings):
         description="Layer-1 agent stops walking the MCP list once a result reaches this confidence",
     )
     pipeline_concurrency: int = Field(
-        default=4,
-        description="How many query rows are processed in parallel during a batch run",
+        default=20,
+        description="How many query rows are processed in parallel during a batch run. Rows are "
+        "independent, so wall clock ≈ slowest row once this reaches the batch size; lower it if "
+        "API rate limits / 529 storms bite",
     )
 
 

@@ -28,6 +28,9 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
         siren = e.get("siren")
         city = siege.get("libelle_commune") or siege.get("code_postal")
         etat = e.get("etat_administratif")
+        full_address = siege.get("adresse") or ", ".join(
+            part for part in (siege.get("code_postal"), siege.get("libelle_commune"), "FR") if part
+        )
         out.append(
             {
                 "number": siren,
@@ -37,6 +40,8 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
                 "status": {"A": "active", "C": "ceased"}.get(etat),
                 "country": "FR",
                 "url": f"{WEB}/{siren}" if siren else None,
+                "address": full_address or None,
+                "incorporation_date": e.get("date_creation"),
             }
         )
     return out

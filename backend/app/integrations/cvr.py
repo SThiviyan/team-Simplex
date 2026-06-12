@@ -13,6 +13,18 @@ WEB = "https://datacvr.virk.dk/enhed/virksomhed"
 _UA = "team-simplex-hackathon/1.0 (Sinpex Hackathon company search demo)"
 
 
+def _iso_date(raw: str | None) -> str | None:
+    """cvrapi reports dates as 'DD/MM - YYYY'; convert to ISO when parseable."""
+    if not raw:
+        return None
+    try:
+        daymonth, year = raw.split(" - ")
+        day, month = daymonth.split("/")
+        return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    except (ValueError, AttributeError):
+        return raw
+
+
 async def search_companies(name: str, limit: int = 10) -> list[dict]:
     """Search the Danish CVR register by name (returns the best match)."""
     client = shared_client("cvr", timeout=20.0, headers={"User-Agent": _UA})
@@ -25,6 +37,9 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
     if not isinstance(d, dict) or d.get("error"):
         return []
     vat = d.get("vat")
+    full_address = ", ".join(
+        part for part in (d.get("address"), d.get("zipcode"), d.get("city"), "DK") if part
+    )
     return [
         {
             "number": str(vat) if vat else None,
@@ -34,5 +49,7 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
             "status": "ophørt" if d.get("enddate") else "aktiv",
             "country": "DK",
             "url": f"{WEB}/{vat}" if vat else None,
+            "address": full_address or None,
+            "incorporation_date": _iso_date(d.get("startdate")),
         }
     ]

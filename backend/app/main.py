@@ -94,7 +94,7 @@ async def csv_search_endpoint(
     # name/jurisdiction come from the same parsed input). No JSON reload.
     # Mock when there's no key (or PIPELINE_MOCK) so the chain never hard-fails.
     mock = settings.pipeline_mock or not os.environ.get("ANTHROPIC_API_KEY")
-    winners = await match_payload(payload, model=settings.anthropic_model, mock=mock)
+    winners = await match_payload(payload, model=settings.matching_model, mock=mock)
 
     # Recursion (one round, parity with the pipeline): when the matcher flags
     # "PwC" -> "PricewaterhouseCoopers", re-gather with the expanded name and
@@ -116,7 +116,7 @@ async def csv_search_endpoint(
         ]
         rematch = await asyncio.to_thread(
             run_matching, combined, suggested, winner.get("jurisdiction") or "",
-            model=settings.anthropic_model, mock=mock,
+            model=settings.matching_model, mock=mock,
         )
         winners[i] = {
             "query_id": winner.get("query_id"),

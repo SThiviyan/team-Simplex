@@ -8,6 +8,8 @@ HandelsregisterSearchProvider.
 """
 
 import re
+import threading
+import time
 
 import certifi
 import mechanize
@@ -38,9 +40,46 @@ def _browser() -> mechanize.Browser:
     return b
 
 
+# One browser per worker thread (asyncio.to_thread reuses its thread pool):
+# the portal session cookie survives between searches, skipping the initial
+# session-establishment redirect dance. The JSF flow itself is re-navigated
+# every time, and any failure retries once on a brand-new browser.
+_thread_state = threading.local()
+
+# The portal is the most bot-sensitive source in the stack: dozens of parallel
+# JSF sessions from one IP get the whole IP timed out (observed live). Searches
+# are therefore fully serialized process-wide and spaced apart — a batch queues
+# here instead of taking the register down for every row.
+_portal_lock = threading.Lock()
+_MIN_INTERVAL = 2.0
+_next_slot = 0.0
+
+
+def _thread_browser(fresh: bool = False) -> mechanize.Browser:
+    b = None if fresh else getattr(_thread_state, "browser", None)
+    if b is None:
+        b = _browser()
+        _thread_state.browser = b
+    return b
+
+
 def search_companies(name: str, limit: int = 10) -> list[dict]:
     """Keyword search of the German commercial register. Returns row dicts."""
-    b = _browser()
+    global _next_slot
+    with _portal_lock:
+        wait = _next_slot - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            return _search(_thread_browser(), name, limit)
+        except Exception:
+            # Stale JSF ViewState / expired session — one retry, fresh browser.
+            return _search(_thread_browser(fresh=True), name, limit)
+        finally:
+            _next_slot = time.monotonic() + _MIN_INTERVAL
+
+
+def _search(b: mechanize.Browser, name: str, limit: int) -> list[dict]:
     b.open(START_URL, timeout=25)
 
     # Trigger the JSF "advanced search" command link by injecting its params.
