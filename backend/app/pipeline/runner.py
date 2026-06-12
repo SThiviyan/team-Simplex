@@ -2,11 +2,17 @@
 
 Per query row: country code -> ranked MCP list -> Layer-1 agent (top-to-bottom loop)
 -> Python prefilter -> Claude eval -> final row. All rows are then written back to CSV.
+
+Rows run concurrently (bounded by settings.pipeline_concurrency); output order always
+matches input order, and a crash in one row never takes down the batch — the judges'
+test CSV must run end-to-end no matter what.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 
+from app.config import settings
 from app.pipeline import csv_io
 from app.pipeline.agent import run_layer1
 from app.pipeline.evaluator import evaluate
@@ -24,6 +30,21 @@ async def process_query(query: QueryRow) -> ExtractionResult:
     return await evaluate(query, filtered)
 
 
+async def _process_guarded(query: QueryRow, semaphore: asyncio.Semaphore) -> ExtractionResult:
+    async with semaphore:
+        logger.info("processing %s (%s, %s)", query.query_id, query.name, query.jurisdiction)
+        try:
+            return await process_query(query)
+        except Exception as exc:
+            # One bad row must not kill the batch — emit an honest error row instead.
+            logger.exception("pipeline failed for query %s", query.query_id)
+            return ExtractionResult(
+                query_id=query.query_id,
+                confidence=0.0,
+                no_match_reason=f"pipeline_error: {type(exc).__name__}: {str(exc)[:120]}",
+            )
+
+
 async def run_pipeline(
     queries: list[QueryRow] | None = None,
     limit: int | None = None,
@@ -34,13 +55,9 @@ async def run_pipeline(
     if limit is not None:
         queries = queries[:limit]
 
-    # TODO: parallelize with asyncio.gather (+ semaphore) once volumes grow.
-    # TODO: for large batches move this behind a background task / job queue —
-    # Cloud Run's request timeout (60s) won't fit a long synchronous run.
-    results: list[ExtractionResult] = []
-    for query in queries:
-        logger.info("processing %s (%s, %s)", query.query_id, query.name, query.jurisdiction)
-        results.append(await process_query(query))
+    semaphore = asyncio.Semaphore(settings.pipeline_concurrency)
+    # gather() preserves input order regardless of completion order.
+    results = list(await asyncio.gather(*(_process_guarded(q, semaphore) for q in queries)))
 
     output_path = csv_io.write_results(results, output_dir=output_dir)
     return PipelineRunSummary(

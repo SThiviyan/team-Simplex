@@ -20,6 +20,10 @@ class Settings(BaseSettings):
         default=0.8,
         description="Layer-1 agent stops walking the MCP list once a result reaches this confidence",
     )
+    pipeline_concurrency: int = Field(
+        default=4,
+        description="How many query rows are processed in parallel during a batch run",
+    )
 
 
 settings = Settings()

@@ -3,11 +3,13 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.pipeline.csv_io import read_queries_text
 from app.pipeline.models import PipelineRunSummary, QueryRow
 from app.pipeline.runner import run_pipeline
 from app.search.orchestrator import FederatedSearch
@@ -61,15 +63,18 @@ class PipelineRunRequest(BaseModel):
     )
 
 
-@app.post("/api/pipeline/run")
-async def pipeline_run(req: PipelineRunRequest | None = None) -> PipelineRunSummary:
-    """Run the registry-lookup chain: per-country MCP list -> agent -> filter -> Claude eval -> CSV."""
+def _require_pipeline_ready() -> None:
     if not settings.pipeline_mock and not os.environ.get("ANTHROPIC_API_KEY"):
         raise HTTPException(
             status_code=503,
             detail="ANTHROPIC_API_KEY is not set (and PIPELINE_MOCK is off) — add it to .env",
         )
 
+
+@app.post("/api/pipeline/run")
+async def pipeline_run(req: PipelineRunRequest | None = None) -> PipelineRunSummary:
+    """Run the registry-lookup chain: per-country MCP list -> agent -> filter -> Claude eval -> CSV."""
+    _require_pipeline_ready()
     req = req or PipelineRunRequest()
     queries = None
     if req.query is not None:
@@ -81,6 +86,26 @@ async def pipeline_run(req: PipelineRunRequest | None = None) -> PipelineRunSumm
             )
         ]
     return await run_pipeline(queries=queries, limit=req.limit)
+
+
+@app.post("/api/pipeline/run-csv")
+async def pipeline_run_csv(file: UploadFile) -> FileResponse:
+    """Eligibility gate: upload the test CSV, get the result CSV back — no manual steps.
+
+    Delimiter (comma/semicolon) is auto-detected; the response is the finished
+    comma-delimited result CSV as a file download.
+    """
+    _require_pipeline_ready()
+    text = (await file.read()).decode("utf-8-sig")
+    queries = read_queries_text(text)
+    if not queries:
+        raise HTTPException(
+            status_code=400,
+            detail="No rows parsed — expected a CSV with columns query_id, name, jurisdiction",
+        )
+    summary = await run_pipeline(queries=queries)
+    output = Path(summary.output_csv)
+    return FileResponse(output, media_type="text/csv", filename=output.name)
 
 
 # Serve built frontend at / (after `npm run build` populates frontend/dist).
