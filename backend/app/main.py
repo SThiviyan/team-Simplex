@@ -9,9 +9,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.pipeline.csv_io import read_queries_text
-from app.pipeline.models import PipelineRunSummary, QueryRow
-from app.pipeline.runner import run_pipeline
+
+# NOTE: app.pipeline.* is imported lazily inside the /api/pipeline handlers, not
+# here. The pipeline pulls in `anthropic`; keeping it out of module scope means a
+# missing/broken pipeline dependency can never take down the search endpoints.
 from app.search.csv_search import csv_search
 from app.search.orchestrator import FederatedSearch
 from app.search.resolver import CompanyResolver
@@ -108,8 +109,11 @@ def _require_pipeline_ready() -> None:
 
 
 @app.post("/api/pipeline/run")
-async def pipeline_run(req: PipelineRunRequest | None = None) -> PipelineRunSummary:
+async def pipeline_run(req: PipelineRunRequest | None = None):
     """Run the registry-lookup chain: per-country MCP list -> agent -> filter -> Claude eval -> CSV."""
+    from app.pipeline.models import QueryRow
+    from app.pipeline.runner import run_pipeline
+
     _require_pipeline_ready()
     req = req or PipelineRunRequest()
     queries = None
@@ -131,6 +135,9 @@ async def pipeline_run_csv(file: UploadFile) -> FileResponse:
     Delimiter (comma/semicolon) is auto-detected; the response is the finished
     comma-delimited result CSV as a file download.
     """
+    from app.pipeline.csv_io import read_queries_text
+    from app.pipeline.runner import run_pipeline
+
     _require_pipeline_ready()
     text = (await file.read()).decode("utf-8-sig")
     queries = read_queries_text(text)
