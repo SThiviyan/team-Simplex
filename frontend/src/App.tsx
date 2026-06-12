@@ -290,8 +290,8 @@ function IdleState() {
     <section className="pt-10 pb-4 flex flex-col items-center text-center gap-3 text-muted animate-fade-in-up">
       <BigLens className="opacity-20" />
       <p className="text-sm max-w-xs text-balance">
-        Type a company name, optionally with a jurisdiction (e.g. "Tesla, US"). We query every
-        relevant register, then RapidFuzz + Claude pick the single best-matching registered entity.
+        Type a company name and pick a jurisdiction. We query every relevant register, then
+        RapidFuzz + Claude pick the single best-matching registered entity.
       </p>
     </section>
   );

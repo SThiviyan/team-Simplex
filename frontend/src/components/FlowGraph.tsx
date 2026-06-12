@@ -9,7 +9,7 @@ type Props = {
   onClose: () => void;
 };
 
-// The stages of the matching chain, as graph nodes.
+// The parent ("father") stages of the matching chain.
 type StageId =
   | 'input'
   | 'routing'
@@ -19,18 +19,11 @@ type StageId =
   | 'semantic'
   | 'winner';
 
-type StageDef = {
-  id: StageId;
-  label: string;
-  count: number | null;
-  tone?: 'winner' | 'muted';
-};
-
-// One entry in a node's "top ranked" detail list.
+// One child of a stage node — a top-ranked item at that stage.
 type RankedItem = {
   name: string;
   sub?: string;
-  score?: number; // 0..1 — rendered as a percentage bar
+  score?: number; // 0..1
   record?: CompanyRecord; // expandable confidence signals when present
   highlight?: boolean;
   muted?: boolean;
@@ -42,11 +35,39 @@ type StageDetail = {
   items: RankedItem[];
 };
 
+// Status ring colors.
+const GREEN = '#4E9B61';
+const AMBER = '#D9A03F';
+const RED = '#C7553F';
+const GRAY = '#C2BAAB';
+
+const CHILD_MAX = 8;
+
+// Father circles scale with how many items reach the stage (sqrt so the AREA
+// tracks the count); all circles are vertically centered on one horizontal
+// axis inside a band of height BAND.
+const SIZE_MIN = 38;
+const SIZE_MAX = 78;
+const BAND = SIZE_MAX;
+
+function sizeFor(count: number, maxCount: number): number {
+  const t = Math.sqrt(Math.max(count, 0) / Math.max(maxCount, 1));
+  return Math.round(SIZE_MIN + (SIZE_MAX - SIZE_MIN) * Math.min(t, 1));
+}
+
+function ringForConf(conf: number): string {
+  if (conf >= 0.7) return GREEN;
+  if (conf >= 0.4) return AMBER;
+  return RED;
+}
+
 function candName(c: CompanyRecord, fallback: string): string {
   return c.name_normalized_register_name ?? fallback;
 }
 
-/** Build the ranked list shown when a stage node is clicked. */
+/* --------------------------- children content --------------------------- */
+
+/** Build the children (top-ranked items) revealed when a father is selected. */
 function stageDetail(
   stage: StageId,
   winner: Winner,
@@ -80,7 +101,7 @@ function stageDetail(
       const called = (query?.sources_called ?? []).map((s) => ({ name: s, sub: 'queried' }));
       const skipped = (query?.sources_skipped ?? []).map((s) => ({
         name: s,
-        sub: 'skipped — cannot match jurisdiction',
+        sub: 'skipped',
         muted: true,
       }));
       return {
@@ -97,7 +118,7 @@ function stageDetail(
         title: 'Top fetched records',
         note:
           query && query.count > cands.length
-            ? `Showing the top ${cands.length} of ${query.count} gathered records (ranked by source confidence) — the rest were dropped before reaching the browser.`
+            ? `Top ${cands.length} of ${query.count} gathered records, ranked by source confidence.`
             : 'Ranked by the confidence the source reported at gather time.',
         items,
       };
@@ -105,12 +126,10 @@ function stageDetail(
     case 'fuzzy': {
       const items = [...cands]
         .sort((a, b) => (b._match?.name_score ?? 0) - (a._match?.name_score ?? 0))
-        .map((c) =>
-          asItem(c, c._match?.name_score, `${c.provider ?? 'register'} · token-sort similarity`),
-        );
+        .map((c) => asItem(c, c._match?.name_score, c.provider ?? 'register'));
       return {
         title: 'Fuzzy shortlist',
-        note: 'RapidFuzz token-sort similarity against the queried name; below-cutoff rows were dropped.',
+        note: 'RapidFuzz name similarity against the query; below-cutoff rows were dropped.',
         items,
       };
     }
@@ -122,8 +141,8 @@ function stageDetail(
             c,
             c.confidence,
             c._match?.jurisdiction_match
-              ? `${c.jurisdiction_confirmed ?? '—'} · aligned`
-              : `${c.jurisdiction_confirmed ?? '—'} · mismatch (demoted)`,
+              ? `${c.jurisdiction_confirmed ?? '—'} aligned`
+              : `${c.jurisdiction_confirmed ?? '—'} mismatch`,
           ),
           muted: winner.jurisdiction ? !c._match?.jurisdiction_match : false,
         }));
@@ -155,7 +174,7 @@ function stageDetail(
             : winner.decision === 'no_match'
               ? winner.reasoning || 'No confident match.'
               : undefined,
-        items: w ? [asItem(w, winner.confidence, `final calibrated confidence — ${label}`)] : [],
+        items: w ? [asItem(w, winner.confidence, `final confidence — ${label}`)] : [],
       };
     }
   }
@@ -164,128 +183,95 @@ function stageDetail(
 /* ------------------------------- visuals -------------------------------- */
 
 function NodeCircle({
-  stage,
-  active,
-  onClick,
+  size,
+  ring,
+  big,
+  small,
+  active = false,
 }: {
-  stage: StageDef;
-  active: boolean;
-  onClick: () => void;
+  size: number;
+  ring: string;
+  big: string;
+  small: string;
+  active?: boolean;
 }) {
-  const tone =
-    stage.tone === 'winner'
-      ? active
-        ? 'border-accent bg-accent text-white'
-        : 'border-accent/60 bg-accent-soft/60 text-accent hover:bg-accent-soft'
-      : active
-        ? 'border-accent bg-accent text-white'
-        : stage.tone === 'muted'
-          ? 'border-line bg-paper/60 text-muted hover:border-accent/40'
-          : 'border-line bg-paper text-ink hover:border-accent/50';
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className="group flex w-16 shrink-0 flex-col items-center gap-1.5 focus:outline-none"
+    <span
+      className="flex shrink-0 flex-col items-center justify-center rounded-full bg-paper shadow-sm"
+      style={{
+        width: size,
+        height: size,
+        border: `2.5px solid ${ring}`,
+        boxShadow: active ? `0 0 0 5px ${ring}26` : undefined,
+      }}
     >
       <span
-        className={`flex h-12 w-12 items-center justify-center rounded-full border-2 font-mono text-sm tabular-nums shadow-sm transition-all ${tone} ${
-          active ? 'ring-4 ring-accent/15 scale-105' : ''
-        }`}
+        className="font-mono tabular-nums leading-none text-ink"
+        style={{ fontSize: size >= 52 ? 15 : 12 }}
       >
-        {stage.count === null ? '—' : stage.count}
+        {big}
       </span>
-      <span
-        className={`text-center text-[10px] leading-tight ${
-          active ? 'font-semibold text-ink' : 'text-muted group-hover:text-ink'
-        }`}
-      >
-        {stage.label}
+      <span className="mt-1 leading-none text-muted" style={{ fontSize: 8.5 }}>
+        {small}
       </span>
-    </button>
+    </span>
   );
 }
 
-function Edge({ drop }: { drop?: number }) {
+// Curved S-arrow between two consecutive fathers, centered on the shared
+// horizontal node axis; the filtered-out count sits beneath the curve.
+function CurvedConnector({ drop }: { drop?: number }) {
+  const c = BAND / 2;
   return (
-    <div className="flex min-w-5 flex-1 flex-col items-center pt-[23px]" aria-hidden>
-      <span className="relative h-px w-full bg-line">
-        <span className="absolute -right-px -top-[3px] h-0 w-0 border-y-[3.5px] border-l-[5px] border-y-transparent border-l-line" />
-      </span>
+    <div className="flex shrink-0 flex-col items-center">
+      <svg width="38" height={BAND} aria-hidden className="shrink-0">
+        <path
+          d={`M3 ${c} C 13 ${c + 12}, 21 ${c - 12}, 29 ${c}`}
+          fill="none"
+          stroke="#BFB7A8"
+          strokeWidth="1.4"
+        />
+        <path
+          d={`M25 ${c - 4.5} L31.5 ${c} L25 ${c + 4.5}`}
+          fill="none"
+          stroke="#BFB7A8"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
       {drop != null && drop > 0 ? (
-        <span className="mt-1 whitespace-nowrap font-mono text-[9px] text-muted">−{drop}</span>
+        <span className="mt-1 whitespace-nowrap font-mono text-[10px] text-muted">−{drop}</span>
       ) : null}
     </div>
   );
 }
 
-function RankedRow({ rank, item }: { rank: number; item: RankedItem }) {
-  const [open, setOpen] = useState(false);
-  const pct = typeof item.score === 'number' ? Math.round(item.score * 100) : null;
-  const expandable = !!item.record;
+// Curved arrows fanning from the selected father down to its children.
+function ChildFan({ n }: { n: number }) {
+  if (n === 0) return null;
   return (
-    <li
-      className={`rounded-lg border px-3 py-2 transition-colors ${
-        item.highlight
-          ? 'border-accent/40 bg-accent-soft/30'
-          : item.muted
-            ? 'border-line bg-paper/50 opacity-70'
-            : 'border-line bg-paper'
-      } ${expandable ? 'cursor-pointer hover:border-accent/40' : ''}`}
-      onClick={expandable ? () => setOpen((v) => !v) : undefined}
+    <svg
+      className="block w-full"
+      height="38"
+      viewBox="0 0 100 38"
+      preserveAspectRatio="none"
+      aria-hidden
     >
-      <div className="flex items-center gap-3">
-        <span className="w-5 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted">
-          {rank}
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] font-medium text-ink">
-            {item.name}
-            {item.highlight ? (
-              <span className="ml-1.5 text-[9px] font-semibold uppercase tracking-wide text-accent">
-                winner
-              </span>
-            ) : null}
-          </p>
-          {item.sub ? <p className="truncate text-[11px] text-muted">{item.sub}</p> : null}
-        </div>
-        {pct !== null ? (
-          <div className="flex w-28 shrink-0 items-center gap-2">
-            <div className="h-1 flex-1 overflow-hidden rounded-full bg-line/60">
-              <div
-                className="h-full origin-left rounded-full bg-accent/70 animate-grow-x"
-                style={{ width: `${Math.max(3, pct)}%` }}
-              />
-            </div>
-            <span className="w-9 text-right font-mono text-[11px] tabular-nums text-accent">
-              {pct}%
-            </span>
-          </div>
-        ) : null}
-        {expandable ? (
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
+      {Array.from({ length: n }, (_, i) => {
+        const x = ((i + 0.5) / n) * 100;
+        return (
+          <path
+            key={i}
+            d={`M50 1 C 50 20, ${x} 12, ${x} 37`}
             fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={`shrink-0 text-muted transition-transform ${open ? 'rotate-180' : ''}`}
-            aria-hidden
-          >
-            <path d="M6 9l6 6 6-6" />
-          </svg>
-        ) : null}
-      </div>
-      {open && item.record ? (
-        <div className="mt-2 border-t border-line pt-2 animate-fade-in">
-          <SignalList signals={confidenceSignals(item.record)} />
-        </div>
-      ) : null}
-    </li>
+            stroke="#BFB7A8"
+            strokeWidth="1.3"
+            vectorEffect="non-scaling-stroke"
+          />
+        );
+      })}
+    </svg>
   );
 }
 
@@ -293,6 +279,7 @@ function RankedRow({ rank, item }: { rank: number; item: RankedItem }) {
 
 function QueryFlow({ winner, query }: { winner: Winner; query?: QueryRow }) {
   const [selected, setSelected] = useState<StageId | null>(null);
+  const [openChild, setOpenChild] = useState<number | null>(null);
 
   const cands = winner.candidates ?? [];
   const hasJuris = !!winner.jurisdiction;
@@ -300,19 +287,87 @@ function QueryFlow({ winner, query }: { winner: Winner; query?: QueryRow }) {
   const fetched = query?.count ?? cands.length;
   const fuzzy = cands.length;
   const aligned = hasJuris ? cands.filter((c) => c._match?.jurisdiction_match).length : fuzzy;
-  const verified = winner.decision === 'match' ? 1 : 0;
+  const matched = winner.decision === 'match';
+  const verified = matched ? 1 : 0;
+  const pct = Math.round((winner.confidence ?? 0) * 100);
   const label = winner.jurisdiction ? `${winner.name} [${winner.jurisdiction}]` : winner.name;
 
-  const stages: StageDef[] = [
-    { id: 'input', label: 'Input', count: 1 },
-    { id: 'routing', label: 'Routing', count: sources },
-    { id: 'fetch', label: 'Fetch', count: fetched },
-    { id: 'fuzzy', label: 'Fuzzy', count: fuzzy },
-    { id: 'jurisdiction', label: 'Nation', count: aligned, tone: hasJuris ? undefined : 'muted' },
-    { id: 'semantic', label: 'Semantic', count: verified },
-    { id: 'winner', label: 'Winner', count: verified, tone: 'winner' },
+  const stages: {
+    id: StageId;
+    count: number; // items reaching this stage — drives the circle size
+    big: string;
+    small: string;
+    label: string;
+    sub: string;
+    ring: string;
+  }[] = [
+    {
+      id: 'input',
+      count: 1,
+      big: '1',
+      small: 'query',
+      label: 'Input',
+      sub: winner.name,
+      ring: GRAY,
+    },
+    {
+      id: 'routing',
+      count: sources ?? 0,
+      big: sources === null ? '—' : String(sources),
+      small: 'regs',
+      label: 'Routing',
+      sub: 'register selection',
+      ring: sources ? GREEN : GRAY,
+    },
+    {
+      id: 'fetch',
+      count: fetched,
+      big: String(fetched),
+      small: 'items',
+      label: 'Fetch',
+      sub: 'gathered records',
+      ring: fetched > 0 ? GREEN : RED,
+    },
+    {
+      id: 'fuzzy',
+      count: fuzzy,
+      big: String(fuzzy),
+      small: 'items',
+      label: 'Fuzzy',
+      sub: 'RapidFuzz filter',
+      ring: fuzzy > 0 ? GREEN : RED,
+    },
+    {
+      id: 'jurisdiction',
+      count: aligned,
+      big: String(aligned),
+      small: 'items',
+      label: 'Nation',
+      sub: hasJuris ? `${winner.jurisdiction} alignment` : 'not constrained',
+      ring: hasJuris ? (aligned > 0 ? GREEN : RED) : GRAY,
+    },
+    {
+      id: 'semantic',
+      count: verified,
+      big: String(verified),
+      small: 'match',
+      label: 'Semantic',
+      sub: 'Claude verification',
+      ring: matched ? ringForConf(winner.confidence ?? 0) : RED,
+    },
+    {
+      id: 'winner',
+      count: verified,
+      big: matched ? `${pct}%` : '0',
+      small: matched ? 'conf' : 'none',
+      label: 'Winner',
+      sub: winner.winning_candidate?.name_normalized_register_name ?? 'no match',
+      ring: matched ? ringForConf(winner.confidence ?? 0) : RED,
+    },
   ];
-  // Items dropped on the way INTO the next node, shown on the edges.
+  const maxCount = Math.max(...stages.map((s) => s.count), 1);
+
+  // Items filtered out on the hop AFTER each stage (drawn next to connectors).
   const drops: (number | undefined)[] = [
     undefined,
     undefined,
@@ -322,7 +377,16 @@ function QueryFlow({ winner, query }: { winner: Winner; query?: QueryRow }) {
     undefined,
   ];
 
+  const select = (id: StageId | null) => {
+    setSelected(id);
+    setOpenChild(null);
+  };
+
+  const father = selected ? stages.find((s) => s.id === selected) : null;
   const detail = selected ? stageDetail(selected, winner, query, label) : null;
+  const children = detail ? detail.items.slice(0, CHILD_MAX) : [];
+  const overflow = detail ? detail.items.length - children.length : 0;
+  const expanded = openChild !== null ? children[openChild] : null;
 
   return (
     <div className="animate-fade-in-up">
@@ -332,45 +396,174 @@ function QueryFlow({ winner, query }: { winner: Winner; query?: QueryRow }) {
         <span className="capitalize text-muted">{winner.decision.replace('_', ' ')}</span>
       </p>
 
-      {/* The node graph: clickable nodes joined by edges with drop counts. */}
-      <div className="-mx-1 overflow-x-auto px-1 pb-1">
-        <div className="flex min-w-[560px] items-start">
-          {stages.map((s, i) => (
-            <div key={s.id} className="contents">
-              <NodeCircle
-                stage={s}
-                active={selected === s.id}
-                onClick={() => setSelected((cur) => (cur === s.id ? null : s.id))}
-              />
-              {i < stages.length - 1 ? <Edge drop={drops[i]} /> : null}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Top-ranked items for the clicked node. */}
-      {detail ? (
-        <div className="mt-3 rounded-xl border border-line bg-paper px-4 py-3 animate-fade-in">
-          <p className="font-mono text-[10px] uppercase tracking-wide text-muted">
-            {detail.title} · top ranked
-          </p>
-          {detail.note ? (
-            <p className="mt-1 max-w-prose text-[12px] text-muted text-balance">{detail.note}</p>
-          ) : null}
-          {detail.items.length ? (
-            <ul className="mt-2.5 space-y-1.5">
-              {detail.items.map((item, i) => (
-                <RankedRow key={`${item.name}-${i}`} rank={i + 1} item={item} />
+      {!father ? (
+        /* ---- Chain view: fathers disposed on one horizontal axis, circle
+               area proportional to the items reaching each stage. ---- */
+        <div className="animate-fade-in">
+          <div className="-mx-1 overflow-x-auto px-1 pb-1">
+            <div className="flex items-start">
+              {stages.map((s, i) => (
+                <div key={s.id} className="contents">
+                  <button
+                    type="button"
+                    onClick={() => select(s.id)}
+                    className="group flex w-[88px] shrink-0 flex-col items-center gap-1.5 rounded-xl px-1 py-0.5 transition-colors hover:bg-paper"
+                  >
+                    <span
+                      className="flex items-center justify-center"
+                      style={{ height: BAND }}
+                    >
+                      <NodeCircle
+                        size={sizeFor(s.count, maxCount)}
+                        ring={s.ring}
+                        big={s.big}
+                        small={s.small}
+                      />
+                    </span>
+                    <span className="w-full truncate text-center text-[11px] font-medium leading-tight text-ink group-hover:text-accent">
+                      {s.label}
+                    </span>
+                    <span className="-mt-1 w-full truncate text-center text-[9.5px] leading-tight text-muted">
+                      {s.sub}
+                    </span>
+                  </button>
+                  {i < stages.length - 1 ? <CurvedConnector drop={drops[i]} /> : null}
+                </div>
               ))}
-            </ul>
-          ) : (
-            <p className="mt-2 text-[12px] text-muted">Nothing reached this stage.</p>
-          )}
+            </div>
+          </div>
+          <p className="mt-2 text-[11px] text-muted">
+            Click a stage to reveal its top-ranked items — circle size tracks how many items
+            reached it.
+          </p>
         </div>
       ) : (
-        <p className="mt-2 text-[11px] text-muted">
-          Click a node to see the top-ranked items at that stage.
-        </p>
+        /* ---- Focus view: one father, its children fanned in below. ---- */
+        <div className="animate-fade-in" key={father.id}>
+          <button
+            type="button"
+            onClick={() => select(null)}
+            className="mb-3 flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-[12px] text-muted transition-colors hover:border-accent/40 hover:text-ink"
+          >
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
+            All stages
+          </button>
+
+          <div className="flex flex-col items-center">
+            <button
+              type="button"
+              onClick={() => select(null)}
+              className="flex flex-col items-center gap-1.5"
+              title="Back to all stages"
+            >
+              <NodeCircle
+                size={Math.max(sizeFor(father.count, maxCount), 56)}
+                ring={father.ring}
+                big={father.big}
+                small={father.small}
+                active
+              />
+              <span className="text-[13px] font-semibold text-ink">{father.label}</span>
+            </button>
+
+            <div className="w-full max-w-xl">
+              <ChildFan n={children.length} />
+              {children.length ? (
+                <div className="flex">
+                  {children.map((item, i) => {
+                    const p = typeof item.score === 'number' ? Math.round(item.score * 100) : null;
+                    const ring = item.record
+                      ? item.muted
+                        ? RED
+                        : ringForConf(item.score ?? item.record.confidence)
+                      : item.muted
+                        ? GRAY
+                        : GREEN;
+                    const big = p !== null ? String(p) : item.muted ? '✗' : '✓';
+                    const small = p !== null ? '%' : 'reg';
+                    const open = openChild === i;
+                    return (
+                      <button
+                        key={`${item.name}-${i}`}
+                        type="button"
+                        onClick={
+                          item.record ? () => setOpenChild(open ? null : i) : undefined
+                        }
+                        className={`flex min-w-0 flex-1 flex-col items-center gap-1.5 px-1 ${
+                          item.record ? 'cursor-pointer' : 'cursor-default'
+                        } ${item.muted ? 'opacity-60' : ''}`}
+                      >
+                        <NodeCircle size={48} ring={ring} big={big} small={small} active={open} />
+                        <span
+                          className={`w-full truncate text-center text-[10px] leading-tight ${
+                            open ? 'font-semibold text-ink' : 'text-ink/80'
+                          }`}
+                        >
+                          {item.name}
+                          {item.highlight ? ' ★' : ''}
+                        </span>
+                        {item.sub ? (
+                          <span className="-mt-1 w-full truncate text-center text-[9px] text-muted">
+                            {item.sub}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-center text-[12px] text-muted">Nothing reached this stage.</p>
+              )}
+              {overflow > 0 ? (
+                <p className="mt-1 text-center font-mono text-[10px] text-muted">
+                  +{overflow} more
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          {detail?.note ? (
+            <p className="mx-auto mt-3 max-w-prose text-center text-[12px] text-muted text-balance">
+              {detail.note}
+            </p>
+          ) : null}
+
+          {/* A clicked child reveals its confidence signals. */}
+          {expanded?.record ? (
+            <div className="mx-auto mt-3 max-w-md rounded-xl border border-line bg-paper px-4 py-3 animate-fade-in">
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="truncate text-[13px] font-medium text-ink">
+                  {expanded.name}
+                  {expanded.highlight ? (
+                    <span className="ml-1.5 text-[9px] font-semibold uppercase tracking-wide text-accent">
+                      winner
+                    </span>
+                  ) : null}
+                </p>
+                {typeof expanded.score === 'number' ? (
+                  <span className="shrink-0 font-mono text-[11px] tabular-nums text-accent">
+                    {Math.round(expanded.score * 100)}%
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-2">
+                <SignalList signals={confidenceSignals(expanded.record)} />
+              </div>
+            </div>
+          ) : null}
+        </div>
       )}
     </div>
   );
@@ -386,7 +579,7 @@ export function FlowGraph({ data, queries, onClose }: Props) {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">Process</p>
-          <h2 className="text-lg font-semibold tracking-[-0.01em] text-ink">Data flow graph</h2>
+          <h2 className="text-lg font-semibold tracking-[-0.01em] text-ink">Data flow</h2>
         </div>
         <button
           type="button"
@@ -396,7 +589,7 @@ export function FlowGraph({ data, queries, onClose }: Props) {
           Hide
         </button>
       </div>
-      <div className="space-y-8">
+      <div className="space-y-10">
         {data.winners.map((w) => (
           <QueryFlow key={w.query_id} winner={w} query={byId.get(w.query_id)} />
         ))}
