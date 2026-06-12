@@ -8,6 +8,7 @@ each covers.
 from app.search.base import SearchProvider
 from app.search.providers.annuaire import AnnuaireSearchProvider
 from app.search.providers.brreg import BrregSearchProvider
+from app.search.providers.companies_house import CompaniesHouseSearchProvider
 from app.search.providers.cro import CroSearchProvider
 from app.search.providers.cvr import CvrSearchProvider
 from app.search.providers.gleif import GleifSearchProvider
@@ -23,6 +24,7 @@ def all_providers() -> list[SearchProvider]:
         GleifSearchProvider(),  # global (LEI)
         WikidataSearchProvider(),  # global (SPARQL)
         HandelsregisterSearchProvider(),  # DE
+        CompaniesHouseSearchProvider(),  # GB
         BrregSearchProvider(),  # NO
         AnnuaireSearchProvider(),  # FR
         CvrSearchProvider(),  # DK

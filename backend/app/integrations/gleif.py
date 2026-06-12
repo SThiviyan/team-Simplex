@@ -49,11 +49,60 @@ def _normalise(rec: dict) -> dict:
         "country": addr.get("country"),
         "jurisdiction": ent.get("jurisdiction"),
         "record_url": f"{RECORD_WEB}/{a.get('lei')}",
+        # The official registration number in the home registry (e.g. "HRB 719915")
+        # and the registration-authority code that issued it (e.g. "RA000296").
+        # registeredAs is the registry's own ID for the entity — NOT the LEI.
+        "registered_as": ent.get("registeredAs"),
+        "ra_code": (ent.get("registeredAt") or {}).get("id"),
+        # Resolved from ra_code below (cached): the specific court / registry
+        # office, e.g. "Amtsgericht Mannheim".
+        "registry_court": None,
         # Extra entity context for the final output / frontend.
         "address": _format_address(addr),
         "last_update": registration.get("lastUpdateDate"),
         "organization_type": organization_type,
     }
+
+
+# RA code -> court/office name, cached per process (the set of registration
+# authorities is small and stable, and results reuse the same codes heavily).
+_RA_OFFICE_CACHE: dict[str, str | None] = {}
+
+
+async def _registration_office(client: httpx.AsyncClient, code: str | None) -> str | None:
+    """Resolve a GLEIF registration-authority code (e.g. "RA000296") to the
+    specific court or registry office (e.g. "Amtsgericht Mannheim").
+
+    Returns None on any failure — never fatal to the search.
+    """
+    if not code:
+        return None
+    if code in _RA_OFFICE_CACHE:
+        return _RA_OFFICE_CACHE[code]
+    office: str | None = None
+    try:
+        resp = await client.get(f"/registration-authorities/{code}")
+        if resp.status_code == 200:
+            attr = resp.json().get("data", {}).get("attributes", {})
+            # Prefer the specific local office name (the court); fall back to the
+            # international name, then the registry name.
+            office = (
+                attr.get("localOrganizationName")
+                or attr.get("internationalOrganizationName")
+                or attr.get("localName")
+                or attr.get("internationalName")
+            )
+    except Exception:
+        office = None
+    _RA_OFFICE_CACHE[code] = office
+    return office
+
+
+async def _attach_courts(client: httpx.AsyncClient, entities: list[dict]) -> list[dict]:
+    """Resolve each entity's registration-authority code to a court/office name."""
+    for e in entities:
+        e["registry_court"] = await _registration_office(client, e.pop("ra_code", None))
+    return entities
 
 
 async def search_entities(name: str, limit: int = 10) -> list[dict]:
@@ -66,7 +115,8 @@ async def search_entities(name: str, limit: int = 10) -> list[dict]:
     async with httpx.AsyncClient(base_url=API_BASE, headers=_HEADERS, timeout=20.0) as client:
         resp = await client.get("/lei-records", params=params)
         resp.raise_for_status()
-        return [_normalise(r) for r in resp.json().get("data", [])]
+        entities = [_normalise(r) for r in resp.json().get("data", [])]
+        return await _attach_courts(client, entities)
 
 
 async def get_entity(lei: str) -> dict:
@@ -74,4 +124,6 @@ async def get_entity(lei: str) -> dict:
     async with httpx.AsyncClient(base_url=API_BASE, headers=_HEADERS, timeout=20.0) as client:
         resp = await client.get(f"/lei-records/{lei.strip().upper()}")
         resp.raise_for_status()
-        return _normalise(resp.json().get("data", {}))
+        entity = _normalise(resp.json().get("data", {}))
+        (entity,) = await _attach_courts(client, [entity])
+        return entity

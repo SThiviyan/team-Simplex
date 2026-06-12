@@ -53,8 +53,8 @@ async def search_one_source(source: str, name: str, limit: int = 10) -> list[dic
     """Query one source's API directly by name.
 
     Args:
-        source: Source id — one of: gleif, wikidata, handelsregister, brreg,
-            annuaire, cvr, cro, sec, prh.
+        source: Source id — one of: gleif, wikidata, handelsregister,
+            companies_house, brreg, annuaire, cvr, cro, sec, prh.
         name: Company name to search for.
         limit: Max results.
     """
