@@ -2,7 +2,12 @@ from abc import ABC, abstractmethod
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.search.registry_format import normalize_date, normalize_registry, normalize_status
+from app.search.registry_format import (
+    infer_jurisdiction,
+    normalize_date,
+    normalize_registry,
+    normalize_status,
+)
 
 
 class SearchResult(BaseModel):
@@ -38,6 +43,13 @@ class SearchResult(BaseModel):
         """Reshape registry_id / registry_court to the jurisdiction's standard
         form (e.g. DE -> "HRB 42243" / "Amtsgericht München"), regardless of which
         provider produced them. Conservative: unrecognised values pass through."""
+        # Trust what the entry itself says about its country (registered address,
+        # then description) over the server it was found on — e.g. a company
+        # returned by the French register whose address is "München, Allemagne" is
+        # DE, not FR. Fall back to the provider's jurisdiction when the entry
+        # states no country. Done first so the registry_id is formatted for the
+        # corrected jurisdiction.
+        self.jurisdiction = infer_jurisdiction(self.address, self.snippet) or self.jurisdiction
         self.registry_id, self.registry_court = normalize_registry(
             self.jurisdiction, self.registry_id, self.registry_court
         )

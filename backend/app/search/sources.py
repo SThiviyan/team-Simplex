@@ -8,6 +8,7 @@ each covers.
 from app.search.base import SearchProvider
 from app.search.providers.ajpes import AjpesSearchProvider
 from app.search.providers.annuaire import AnnuaireSearchProvider
+from app.search.providers.ares import AresSearchProvider
 from app.search.providers.brreg import BrregSearchProvider
 from app.search.providers.companies_house import CompaniesHouseSearchProvider
 from app.search.providers.cro import CroSearchProvider
@@ -35,4 +36,5 @@ def all_providers() -> list[SearchProvider]:
         PrhSearchProvider(),  # FI
         NzbnSearchProvider(),  # NZ
         AjpesSearchProvider(),  # SI
+        AresSearchProvider(),  # CZ
     ]

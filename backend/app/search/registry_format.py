@@ -23,6 +23,80 @@ import re
 _WS = re.compile(r"\s+")
 
 
+# --- jurisdiction inference (from the entry's own data, not the server) ------
+
+# ISO 3166-1 alpha-2 codes — used to recognise a country code at the tail of a
+# registered address (GLEIF style: "Petuelring 130, 80788 München, DE-BY, DE").
+_ISO_ALPHA2 = frozenset(
+    "AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL "
+    "BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV "
+    "CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD "
+    "GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM "
+    "IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK "
+    "LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW "
+    "MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR "
+    "PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS "
+    "ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY "
+    "UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW".split()
+)
+
+# Country name (in several languages) -> ISO 3166-1 alpha-2, so a free-text
+# address/description that names the country ("…, München, Allemagne") still
+# resolves. Keys are lower-cased; matched on word boundaries, longest first.
+_COUNTRY_NAMES = {
+    "germany": "DE", "allemagne": "DE", "deutschland": "DE", "alemania": "DE", "germania": "DE",
+    "france": "FR", "frankreich": "FR", "francia": "FR",
+    "united kingdom": "GB", "great britain": "GB", "royaume-uni": "GB", "grande-bretagne": "GB",
+    "england": "GB", "angleterre": "GB", "vereinigtes königreich": "GB",
+    "united states": "US", "united states of america": "US", "états-unis": "US",
+    "etats-unis": "US", "vereinigte staaten": "US",
+    "norway": "NO", "norvège": "NO", "norvege": "NO", "norwegen": "NO", "norge": "NO",
+    "denmark": "DK", "danemark": "DK", "dänemark": "DK", "danmark": "DK",
+    "ireland": "IE", "irlande": "IE", "irland": "IE",
+    "finland": "FI", "finlande": "FI", "finnland": "FI", "suomi": "FI",
+    "new zealand": "NZ", "nouvelle-zélande": "NZ", "neuseeland": "NZ",
+    "slovenia": "SI", "slovénie": "SI", "slowenien": "SI", "slovenija": "SI",
+    "czechia": "CZ", "czech republic": "CZ", "tchéquie": "CZ", "république tchèque": "CZ",
+    "tschechien": "CZ", "česko": "CZ", "česká republika": "CZ",
+    "austria": "AT", "autriche": "AT", "österreich": "AT", "osterreich": "AT",
+    "spain": "ES", "espagne": "ES", "spanien": "ES", "españa": "ES", "espana": "ES",
+    "italy": "IT", "italie": "IT", "italien": "IT", "italia": "IT",
+    "netherlands": "NL", "pays-bas": "NL", "niederlande": "NL", "nederland": "NL",
+    "belgium": "BE", "belgique": "BE", "belgien": "BE", "belgië": "BE", "belgie": "BE",
+    "switzerland": "CH", "suisse": "CH", "schweiz": "CH", "svizzera": "CH",
+    "poland": "PL", "pologne": "PL", "polen": "PL", "polska": "PL",
+    "sweden": "SE", "suède": "SE", "suede": "SE", "schweden": "SE", "sverige": "SE",
+    "portugal": "PT", "luxembourg": "LU", "luxemburg": "LU",
+}
+_COUNTRY_NAMES_BY_LEN = sorted(_COUNTRY_NAMES, key=len, reverse=True)
+
+
+def infer_jurisdiction(*texts: str | None) -> str | None:
+    """Infer an ISO 3166-1 alpha-2 jurisdiction from an entry's OWN text (its
+    registered address, then description), rather than from the server it came
+    from. Recognises a trailing ISO country code or a country name in several
+    languages. Returns None when the entry states no country.
+    """
+    for text in texts:
+        if not text:
+            continue
+        cleaned = _WS.sub(" ", text).strip().rstrip(".")
+        if not cleaned:
+            continue
+        # 1) A trailing ISO alpha-2 country code (e.g. "…, München, DE-BY, DE").
+        last = re.split(r"[,\s]+", cleaned)[-1].upper()
+        if len(last) == 2 and last in _ISO_ALPHA2:
+            return last
+        # 2) The text ENDS WITH a country name. Anchored to the tail so a
+        #    country-named street in the middle of an address ("Avenue
+        #    d'Allemagne, Paris") does NOT flip a French company to DE.
+        low = cleaned.lower()
+        for name in _COUNTRY_NAMES_BY_LEN:
+            if low == name or re.search(rf"[,\s]{re.escape(name)}$", low):
+                return _COUNTRY_NAMES[name]
+    return None
+
+
 def _clean(value: str | None) -> str | None:
     return _WS.sub(" ", value).strip() if value else value
 
@@ -123,14 +197,15 @@ def normalize_registry(
 # common snake_case vocabulary (active / inactive / dissolved / in_liquidation /
 # in_administration). Unknown values fall back to a snake_cased form of the input.
 _STATUS_MAP = {
-    "active": "active", "aktiv": "active", "registered": "active", "live": "active",
-    "normal": "active", "a": "active", "i drift": "active", "issued": "active",
-    "in business": "active",
+    "active": "active", "aktiv": "active", "aktivní": "active", "aktivni": "active",
+    "registered": "active", "live": "active", "normal": "active", "a": "active",
+    "i drift": "active", "issued": "active", "in business": "active",
     "inactive": "inactive", "lapsed": "inactive", "merged": "inactive",
     "dissolved": "dissolved", "slettet": "dissolved", "removed": "dissolved",
     "ophørt": "dissolved", "ophoert": "dissolved", "ceased": "dissolved",
     "c": "dissolved", "deregistered": "dissolved", "struck off": "dissolved",
-    "strike off": "dissolved", "closed": "dissolved",
+    "strike off": "dissolved", "closed": "dissolved", "zaniklý": "dissolved",
+    "zanikly": "dissolved",
     "liquidation": "in_liquidation", "in liquidation": "in_liquidation",
     "i likvidasjon": "in_liquidation", "likvidasjon": "in_liquidation",
     "konkurs": "in_liquidation", "insolvency": "in_liquidation",

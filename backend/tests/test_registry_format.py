@@ -1,7 +1,12 @@
 """Unit tests for country-standard registry_id / registry_court normalisation."""
 
 from app.search.base import SearchResult
-from app.search.registry_format import normalize_date, normalize_registry, normalize_status
+from app.search.registry_format import (
+    infer_jurisdiction,
+    normalize_date,
+    normalize_registry,
+    normalize_status,
+)
 
 
 def test_de_handelsregister_id_and_court():
@@ -57,6 +62,43 @@ def test_incorporation_date_reduced_to_iso_calendar_date():
     assert normalize_date("1916-02-19T23:00:00Z") == "1916-02-19"
     assert normalize_date("2001-09-11") == "2001-09-11"
     assert normalize_date(None) is None
+
+
+def test_infer_jurisdiction_from_entry_text():
+    # Trailing ISO code (GLEIF address style).
+    assert infer_jurisdiction("Petuelring 130, 80788 München, DE") == "DE"
+    # Country name, in another language (the BMW-on-the-French-server case).
+    assert infer_jurisdiction("Siège: Munich, Allemagne") == "DE"
+    assert infer_jurisdiction("Tesco House, Welwyn Garden City, United Kingdom") == "GB"
+    # The real annuaire foreign address for BMW AG.
+    assert infer_jurisdiction("PETUELRING 130 80809 MUNCHEN ALLEMAGNE") == "DE"
+    # A country-named *street* in the middle must NOT match (tail-anchored).
+    assert infer_jurisdiction("Avenue d'Allemagne 75019 Paris") is None
+    # No country stated -> None (caller keeps the provider's jurisdiction).
+    assert infer_jurisdiction("tř. Václava Klementa 869, Mladá Boleslav") is None
+    assert infer_jurisdiction(None, None) is None
+
+
+def test_jurisdiction_follows_entry_not_server():
+    # Found on the French register, but the entry's own text says Germany.
+    r = SearchResult(
+        title="Bayerische Motoren Werke AG",
+        snippet="Constructeur automobile · Munich, Allemagne",
+        score=0.9,
+        source="annuaire",
+        jurisdiction="FR",  # what the server assumed
+        registry_id="HRB 42243",
+    )
+    assert r.jurisdiction == "DE"  # corrected from the entry's description
+    # When the entry states no country, the provider's jurisdiction stands.
+    r2 = SearchResult(
+        title="Škoda Auto a.s.",
+        snippet="Akciová společnost · Mladá Boleslav · active",
+        score=0.9,
+        source="ares",
+        jurisdiction="CZ",
+    )
+    assert r2.jurisdiction == "CZ"
 
 
 def test_searchresult_applies_normalisation_on_construction():

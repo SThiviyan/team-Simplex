@@ -31,6 +31,7 @@ def rows_to_results(rows: list[dict], source: str, limit: int) -> list[SearchRes
                 organization_type=r.get("legal_form"),
                 status=r.get("status"),
                 incorporation_date=r.get("incorporation_date"),
+                address=r.get("address"),
             )
         )
     return results
