@@ -8,7 +8,14 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
-    "httpx>=0.27",
+    # http2 extra: the Wikidata SPARQL endpoint's WAF requires HTTP/2.
+    "httpx[http2]>=0.27",
+    # MCP servers (app/mcp_servers/*) expose the keyless GLEIF & Wikidata APIs.
+    "mcp>=1.0",
+    # Handelsregister MCP server scrapes the JSF portal (no API): browser + parser.
+    "mechanize>=0.4",
+    "beautifulsoup4>=4.12",
+    "certifi",
 ]
 
 [dependency-groups]

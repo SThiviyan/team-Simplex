@@ -28,8 +28,8 @@ export function SearchBar({ onSubmit, busy }: Props) {
       <input
         type="search"
         autoFocus
-        aria-label="Search"
-        placeholder="Search anything…"
+        aria-label="Search companies by name and optional jurisdiction"
+        placeholder="Company name, jurisdiction — e.g. Tesla, US"
         value={q}
         onChange={(e) => setQ(e.target.value)}
         disabled={busy}

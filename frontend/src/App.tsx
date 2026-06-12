@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { SearchBar } from './components/SearchBar';
-import { search, SearchResult } from './api';
+import { csvSearch, CompanyRecord, QueryRow } from './api';
 
 type State =
   | { kind: 'idle' }
   | { kind: 'loading'; query: string }
-  | { kind: 'ok'; query: string; results: SearchResult[] }
+  | { kind: 'ok'; query: string; results: CompanyRecord[]; queries: QueryRow[]; file?: string }
   | { kind: 'error'; query: string; message: string };
 
 export default function App() {
@@ -14,8 +14,8 @@ export default function App() {
   async function runSearch(q: string) {
     setState({ kind: 'loading', query: q });
     try {
-      const r = await search(q);
-      setState({ kind: 'ok', query: r.query, results: r.results });
+      const r = await csvSearch(q);
+      setState({ kind: 'ok', query: q, results: r.results, queries: r.queries, file: r.output_file });
     } catch (e) {
       setState({
         kind: 'error',
@@ -48,12 +48,12 @@ function Header() {
   return (
     <header className="space-y-2">
       <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted">
-        <span className="text-accent font-semibold">Sinpex</span> Hackathon 2026
+        <span className="text-accent font-semibold">Sinpex</span> · Company Search
       </p>
       <h1 className="font-sans text-4xl sm:text-5xl font-semibold tracking-[-0.02em] text-balance leading-[1.05]">
-        Federated search,
+        Find any company,
         <br />
-        <span className="text-muted">your way.</span>
+        <span className="text-muted">anywhere.</span>
       </h1>
     </header>
   );
@@ -65,40 +65,74 @@ function Results({ state, onRetry }: { state: State; onRetry: () => void }) {
   if (state.kind === 'error') return <ErrorState message={state.message} onRetry={onRetry} />;
   if (state.results.length === 0) return <EmptyResultsState query={state.query} />;
 
+  const queryLabel = state.queries
+    .map((q) => (q.jurisdiction ? `${q.name} [${q.jurisdiction}]` : q.name))
+    .join(' · ');
+
   return (
     <section aria-label="Search results" className="space-y-0">
-      <p className="font-mono text-xs uppercase tracking-wider text-muted pb-3">
-        {state.results.length} result{state.results.length === 1 ? '' : 's'} · {state.query}
+      <p className="font-mono text-xs uppercase tracking-wider text-muted pb-1">
+        {state.results.length} result{state.results.length === 1 ? '' : 's'} · {queryLabel}
       </p>
+      {state.file && (
+        <p className="font-mono text-[11px] text-muted pb-3">
+          written to <span className="text-ink/70">{state.file}</span>
+        </p>
+      )}
       <ul className="divide-y divide-line">
-        {state.results.map((r, i) => (
-          <li
-            key={`${state.query}-${i}`}
-            style={{ animationDelay: `${i * 40}ms` }}
-            className="animate-fade-in-up py-5 first:pt-3"
-          >
-            <div className="flex items-baseline gap-4">
-              <h3 className="font-medium text-[17px] tracking-[-0.005em]">
-                {r.url ? (
-                  <a
-                    href={r.url}
-                    className="hover:text-accent transition-colors duration-150"
-                  >
-                    {r.title}
-                  </a>
-                ) : (
-                  r.title
+        {state.results.map((r, i) => {
+          const isUrl = !!r.source && /^https?:\/\//.test(r.source);
+          const title =
+            r.name_normalized_register_name ?? `No match — ${r.no_match_reason ?? 'unknown'}`;
+          return (
+            <li
+              key={`${r.query_id}-${i}`}
+              style={{ animationDelay: `${i * 40}ms` }}
+              className="animate-fade-in-up py-5 first:pt-3"
+            >
+              <div className="flex items-baseline gap-4">
+                <h3 className="font-medium text-[17px] tracking-[-0.005em]">
+                  {isUrl ? (
+                    <a
+                      href={r.source!}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="hover:text-accent transition-colors duration-150"
+                    >
+                      {title}
+                    </a>
+                  ) : (
+                    <span className={r.name_normalized_register_name ? '' : 'text-muted'}>
+                      {title}
+                    </span>
+                  )}
+                </h3>
+                <span className="ml-auto shrink-0 flex items-baseline gap-2 font-mono text-[11px] tabular-nums text-muted">
+                  {r.jurisdiction_confirmed && (
+                    <span className="rounded bg-accent-soft/60 px-1.5 py-0.5 text-accent">
+                      {r.jurisdiction_confirmed}
+                    </span>
+                  )}
+                  {r.provider && (
+                    <span className="rounded bg-line/60 px-1.5 py-0.5 uppercase tracking-wide">
+                      {r.provider}
+                    </span>
+                  )}
+                  <span title="confidence">{Math.round(r.confidence * 100)}%</span>
+                </span>
+              </div>
+              <p className="mt-1.5 text-[15px] text-ink/75 text-balance max-w-prose">
+                {r.registry_id && (
+                  <span className="font-mono text-[13px] text-ink/60">
+                    {r.registry_id}
+                    {r.registry_court ? ` · ${r.registry_court}` : ''} ·{' '}
+                  </span>
                 )}
-              </h3>
-              <span className="ml-auto shrink-0 font-mono text-[11px] tabular-nums text-muted">
-                {r.source} · {r.score.toFixed(2)}
-              </span>
-            </div>
-            <p className="mt-1.5 text-[15px] text-ink/75 text-balance max-w-prose">
-              {r.snippet}
-            </p>
-          </li>
-        ))}
+                {r.snippet}
+              </p>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
@@ -109,7 +143,8 @@ function IdleState() {
     <section className="pt-10 pb-4 flex flex-col items-center text-center gap-3 text-muted animate-fade-in-up">
       <BigLens className="opacity-20" />
       <p className="text-sm max-w-xs text-balance">
-        Try searching for anything. The result is up to you to define.
+        Type a company name, optionally with a jurisdiction (e.g. "Tesla, US"). We query every
+        relevant register and return all matches — filtered to that jurisdiction if you give one.
       </p>
     </section>
   );
@@ -138,7 +173,7 @@ function LoadingState() {
 function EmptyResultsState({ query }: { query: string }) {
   return (
     <section className="pt-6 text-sm text-muted animate-fade-in-up">
-      No matches for <span className="text-ink">"{query}"</span>. Try a different query.
+      No companies match <span className="text-ink">"{query}"</span>. Try a different name.
     </section>
   );
 }
