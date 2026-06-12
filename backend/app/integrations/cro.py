@@ -24,7 +24,7 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
     n = max(1, min(limit, 50))
     sql = (
         f'SELECT company_num, company_name, company_status, company_type, '
-        f'company_address_1, company_address_4 FROM "{RESOURCE_ID}" '
+        f'company_reg_date, company_address_1, company_address_4 FROM "{RESOURCE_ID}" '
         f"WHERE company_name ILIKE '%{safe}%' LIMIT {n}"
     )
     async with httpx.AsyncClient(
@@ -47,6 +47,7 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
                 "legal_form": e.get("company_type"),
                 "city": e.get("company_address_4") or e.get("company_address_1"),
                 "status": e.get("company_status"),
+                "incorporation_date": e.get("company_reg_date"),
                 "country": "IE",
                 "url": None,
             }

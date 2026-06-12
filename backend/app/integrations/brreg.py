@@ -30,6 +30,8 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
                 "legal_form": (e.get("organisasjonsform") or {}).get("beskrivelse"),
                 "city": addr.get("poststed") or addr.get("kommune"),
                 "status": "slettet" if e.get("slettedato") else None,
+                "incorporation_date": e.get("stiftelsesdato")
+                or e.get("registreringsdatoEnhetsregisteret"),
                 "country": "NO",
                 "url": f"{WEB}/{num}" if num else None,
             }

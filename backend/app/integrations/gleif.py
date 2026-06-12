@@ -38,8 +38,6 @@ def _normalise(rec: dict) -> dict:
     addr = ent.get("legalAddress") or {}
     registration = a.get("registration") or {}
     legal_form = ent.get("legalForm") or {}
-    # Prefer the free-text legal form ("other"); fall back to the ELF code id.
-    organization_type = legal_form.get("other") or legal_form.get("id")
     return {
         "lei": a.get("lei"),
         "name": (ent.get("legalName") or {}).get("name"),
@@ -60,7 +58,13 @@ def _normalise(rec: dict) -> dict:
         # Extra entity context for the final output / frontend.
         "address": _format_address(addr),
         "last_update": registration.get("lastUpdateDate"),
-        "organization_type": organization_type,
+        # Free-text legal form when GLEIF has one; else the ELF code (resolved to
+        # a readable name below, e.g. "6QQB" -> "Aktiengesellschaft").
+        "organization_type": legal_form.get("other"),
+        "elf_code": legal_form.get("id"),
+        # The entity's incorporation/creation date and its operating status.
+        "incorporation_date": ent.get("creationDate"),
+        "status": ent.get("status"),  # ACTIVE / INACTIVE / NULL
     }
 
 
@@ -98,10 +102,41 @@ async def _registration_office(client: httpx.AsyncClient, code: str | None) -> s
     return office
 
 
-async def _attach_courts(client: httpx.AsyncClient, entities: list[dict]) -> list[dict]:
-    """Resolve each entity's registration-authority code to a court/office name."""
+# ELF code -> legal-form name, cached per process (ISO 20275 codes are small and
+# stable, e.g. "6QQB" -> "Aktiengesellschaft").
+_ELF_NAME_CACHE: dict[str, str | None] = {}
+
+
+async def _legal_form_name(client: httpx.AsyncClient, code: str | None) -> str | None:
+    """Resolve a GLEIF/ISO-20275 entity-legal-form code to its readable name.
+
+    Returns None on any failure — never fatal to the search.
+    """
+    if not code:
+        return None
+    if code in _ELF_NAME_CACHE:
+        return _ELF_NAME_CACHE[code]
+    name: str | None = None
+    try:
+        resp = await client.get(f"/entity-legal-forms/{code}")
+        if resp.status_code == 200:
+            names = resp.json().get("data", {}).get("attributes", {}).get("names", [])
+            if names:
+                name = names[0].get("localName") or names[0].get("transliteratedName")
+    except Exception:
+        name = None
+    _ELF_NAME_CACHE[code] = name
+    return name
+
+
+async def _enrich(client: httpx.AsyncClient, entities: list[dict]) -> list[dict]:
+    """Resolve each entity's authority code to a court name and its ELF code to a
+    readable legal-form name (when GLEIF didn't provide a free-text one)."""
     for e in entities:
         e["registry_court"] = await _registration_office(client, e.pop("ra_code", None))
+        elf = e.pop("elf_code", None)
+        if not e.get("organization_type"):
+            e["organization_type"] = await _legal_form_name(client, elf)
     return entities
 
 
@@ -116,7 +151,7 @@ async def search_entities(name: str, limit: int = 10) -> list[dict]:
         resp = await client.get("/lei-records", params=params)
         resp.raise_for_status()
         entities = [_normalise(r) for r in resp.json().get("data", [])]
-        return await _attach_courts(client, entities)
+        return await _enrich(client, entities)
 
 
 async def get_entity(lei: str) -> dict:
@@ -125,5 +160,5 @@ async def get_entity(lei: str) -> dict:
         resp = await client.get(f"/lei-records/{lei.strip().upper()}")
         resp.raise_for_status()
         entity = _normalise(resp.json().get("data", {}))
-        (entity,) = await _attach_courts(client, [entity])
+        (entity,) = await _enrich(client, [entity])
         return entity

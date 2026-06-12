@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from app.search.registry_format import normalize_date, normalize_registry, normalize_status
 
 
 class SearchResult(BaseModel):
@@ -23,8 +25,25 @@ class SearchResult(BaseModel):
     last_update: str | None = None       # when the source's data was last updated
     address: str | None = None           # registered address of the company
     organization_type: str | None = None  # legal form / organization type (e.g. GmbH)
+    # Date the company was incorporated/first registered (ISO YYYY-MM-DD).
+    incorporation_date: str | None = None
+    # Entity status, normalised to a common vocabulary (active, in_liquidation,
+    # dissolved, …); see registry_format.normalize_status.
+    status: str | None = None
     # Per-source signals the resolver can rank on, e.g. {"sitelinks": 87}.
     metadata: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _conform_registry_to_national_standard(self) -> "SearchResult":
+        """Reshape registry_id / registry_court to the jurisdiction's standard
+        form (e.g. DE -> "HRB 42243" / "Amtsgericht München"), regardless of which
+        provider produced them. Conservative: unrecognised values pass through."""
+        self.registry_id, self.registry_court = normalize_registry(
+            self.jurisdiction, self.registry_id, self.registry_court
+        )
+        self.status = normalize_status(self.status)
+        self.incorporation_date = normalize_date(self.incorporation_date)
+        return self
 
 
 class SearchProvider(ABC):

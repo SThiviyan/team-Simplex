@@ -47,6 +47,7 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
                 "legal_form": None,
                 "city": None,
                 "status": None,
+                "incorporation_date": co.get("registrationDate"),
                 "country": "FI",
                 "court": None,
                 "url": None,
