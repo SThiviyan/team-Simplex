@@ -314,6 +314,20 @@ def _mock_result(fuzz_candidates: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+# Shared default client: the API is stateless (every request carries its own
+# full message list), so one client is just connection-pool reuse. The sync
+# client is thread-safe, and the per-request with_options(timeout=...) below
+# keeps timeouts out of client construction. Callers can still inject their own.
+_shared_client: anthropic.Anthropic | None = None
+
+
+def _default_client() -> anthropic.Anthropic:
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = anthropic.Anthropic()
+    return _shared_client
+
+
 def semantic_filter(
     user_query: str,
     target_jurisdiction: str,
@@ -369,7 +383,7 @@ def semantic_filter(
         return _mock_result(fuzz_candidates)
 
     if client is None:
-        client = anthropic.Anthropic()
+        client = _default_client()
 
     user_content = _build_user_content(
         user_query, target_jurisdiction, fuzz_candidates

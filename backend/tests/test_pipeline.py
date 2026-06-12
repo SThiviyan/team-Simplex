@@ -427,6 +427,44 @@ async def test_recursion_reenters_layer1(monkeypatch, mock_mode):
     assert result.confidence == 0.93
 
 
+async def test_matching_path_runs_and_logs_filter_stats(mock_mode, monkeypatch):
+    """Low-confidence agent answer with gathered records must flow through the
+    REAL matching layer (mock LLM) and log filter stats without crashing.
+    Regression: filter_result event once raised TypeError on duplicate kwargs."""
+    from app.pipeline import runner
+    from app.pipeline.agent import Layer1Outcome
+
+    async def fake_layer1(query, mcps, run_id):
+        outcome = Layer1Outcome()
+        outcome.candidates.append(
+            ExtractionResult(query_id=query.query_id, registry_id="HRB 1", confidence=0.4)
+        )
+        outcome.records.append(
+            {
+                "query_id": query.query_id,
+                "registry_id": "HRB 6684",
+                "registry_court": "Amtsgericht München",
+                "name_normalized_register_name": "Siemens Aktiengesellschaft",
+                "jurisdiction_confirmed": "DE",
+                "confidence": 0.7,
+                "source": "https://reg.example/siemens",
+                "no_match_reason": None,
+            }
+        )
+        return outcome
+
+    monkeypatch.setattr(runner, "run_layer1", fake_layer1)
+
+    result = await runner.process_query(
+        QueryRow(query_id="m1", name="Siemens AG", jurisdiction="DE"), run_id="match-run"
+    )
+    assert not (result.no_match_reason or "").startswith("pipeline_error")
+    assert result.registry_id == "HRB 6684"
+
+    types = [e["event_type"] for e in event_log.list_events("match-run")]
+    assert "eval_started" in types and "eval_result" in types and "filter_result" in types
+
+
 async def test_pipeline_mock_end_to_end(mock_mode, tmp_path):
     summary = await run_pipeline(limit=2, output_dir=tmp_path)
 

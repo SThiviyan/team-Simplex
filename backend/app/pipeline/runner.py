@@ -75,11 +75,13 @@ async def _run_matching(query: QueryRow, records: list[dict], run_id: str) -> di
         query_kind=match.get("query_kind"),
         kept_candidates=len(match.get("candidates") or []),
     )
-    await event_log.log_event(
-        run_id, "filter_result", query.query_id,
-        records_in=len(records), candidates_kept=len(match.get("candidates") or []),
+    # gross_filter already carries records_in/candidates_kept — merge, don't duplicate.
+    filter_stats = {
+        "records_in": len(records),
+        "candidates_kept": len(match.get("candidates") or []),
         **(match.get("gross_filter") or {}),
-    )
+    }
+    await event_log.log_event(run_id, "filter_result", query.query_id, **filter_stats)
     return match
 
 

@@ -11,6 +11,7 @@ When a country's MCP attempts yield nothing usable, a single web-search call is
 the fallback. Structured JSON output is enforced via output_config throughout.
 """
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
@@ -103,9 +104,21 @@ class Layer1Outcome:
         )
 
 
+# One client per event loop (CLI, server, and each test run their own): the
+# API is stateless — every call carries its own full `messages` — so sharing a
+# client only reuses pooled connections; httpx pools are loop-bound, hence the
+# loop key (same pattern as app/integrations/http.py).
+_clients: dict[int, anthropic.AsyncAnthropic] = {}
+
+
 def _client() -> anthropic.AsyncAnthropic:
-    # 529/overload storms pass within seconds — retry hard instead of giving up.
-    return anthropic.AsyncAnthropic(max_retries=8)
+    loop_id = id(asyncio.get_running_loop())
+    client = _clients.get(loop_id)
+    if client is None:
+        # 529/overload storms pass within seconds — retry hard, don't give up.
+        client = anthropic.AsyncAnthropic(max_retries=8)
+        _clients[loop_id] = client
+    return client
 
 
 def _user_prompt(query: QueryRow, via: str) -> str:
