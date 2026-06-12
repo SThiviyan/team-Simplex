@@ -41,6 +41,7 @@ def _normalise(entity: dict) -> dict:
         "status": entity.get("entityStatusDescription") or entity.get("entityStatusCode"),
         "organization_type": entity.get("entityTypeDescription") or entity.get("entityTypeCode"),
         "address": _format_address(entity),
+        "incorporation_date": entity.get("registrationDate"),
         "last_update": entity.get("lastUpdatedDate") or entity.get("registrationDate"),
         # NZ register; ISO 3166-1 alpha-2 so the jurisdiction filter matches "NZ".
         "jurisdiction": "NZ",

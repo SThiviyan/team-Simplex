@@ -66,6 +66,8 @@ class NzbnSearchProvider(SearchProvider):
                     register_name=e.get("name"),
                     address=e.get("address"),
                     organization_type=e.get("organization_type"),
+                    incorporation_date=e.get("incorporation_date"),
+                    status=e.get("status"),
                     last_update=e.get("last_update"),
                 )
             )

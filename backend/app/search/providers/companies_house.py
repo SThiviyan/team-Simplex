@@ -67,6 +67,8 @@ class CompaniesHouseSearchProvider(SearchProvider):
                     register_name=r.get("name"),
                     address=r.get("address"),
                     organization_type=r.get("organization_type"),
+                    incorporation_date=r.get("date_of_creation"),
+                    status=r.get("status"),
                 )
             )
         return results

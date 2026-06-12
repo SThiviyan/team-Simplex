@@ -63,6 +63,8 @@ class GleifSearchProvider(SearchProvider):
                     last_update=e.get("last_update"),
                     address=e.get("address"),
                     organization_type=e.get("organization_type"),
+                    incorporation_date=e.get("incorporation_date"),
+                    status=e.get("status"),
                 )
             )
         return results

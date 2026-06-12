@@ -35,6 +35,7 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
                 "legal_form": None,  # API only gives a numeric nature_juridique code
                 "city": city,
                 "status": {"A": "active", "C": "ceased"}.get(etat),
+                "incorporation_date": e.get("date_creation"),
                 "country": "FR",
                 "url": f"{WEB}/{siren}" if siren else None,
             }
