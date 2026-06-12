@@ -44,7 +44,9 @@ class WikidataSearchProvider(SearchProvider):
                     score=_score(query, label, i),
                     source=self.name,
                     jurisdiction=e.get("jurisdiction"),
-                    registry_id=e.get("qid"),
+                    # The official registration number when Wikidata has one (via
+                    # OpenCorporates); NOT the QID — that stays in the title/url.
+                    registry_id=e.get("registration_number"),
                     register_name=label,
                     metadata={"sitelinks": e.get("sitelinks", 0)},
                 )

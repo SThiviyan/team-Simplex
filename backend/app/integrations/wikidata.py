@@ -62,7 +62,7 @@ def _entity_search_query(name: str, limit: int) -> str:
     # Over-fetch candidates since the org-type filter drops non-companies.
     candidates = min(50, max(n * 5, 10))
     return f"""
-SELECT DISTINCT ?item ?itemLabel ?itemDescription ?sitelinks ?cc WHERE {{
+SELECT DISTINCT ?item ?itemLabel ?itemDescription ?sitelinks ?cc ?ocid WHERE {{
   SERVICE wikibase:mwapi {{
     bd:serviceParam wikibase:api "EntitySearch" ;
                     wikibase:endpoint "www.wikidata.org" ;
@@ -75,6 +75,9 @@ SELECT DISTINCT ?item ?itemLabel ?itemDescription ?sitelinks ?cc WHERE {{
   VALUES ?orgClass {{ {" ".join(_ORG_ROOTS)} }}
   ?item wikibase:sitelinks ?sitelinks .
   OPTIONAL {{ ?item wdt:P17/wdt:P297 ?cc . }}
+  # OpenCorporates ID (P1320), formatted "<jurisdiction>/<registration-number>" —
+  # the only place Wikidata carries an official registry number (vs. its own QID).
+  OPTIONAL {{ ?item wdt:P1320 ?ocid . }}
   SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,mul". }}
 }}
 ORDER BY DESC(?sitelinks)
@@ -82,18 +85,29 @@ LIMIT {candidates}
 """.strip()
 
 
+def _registration_number(ocid: str | None) -> str | None:
+    """The OpenCorporates ID is "<jurisdiction>/<number>" (e.g. "gb/00445790").
+    The official registration number is the part after the last slash."""
+    if not ocid:
+        return None
+    return ocid.rsplit("/", 1)[-1] or None
+
+
 async def search_entities(name: str, limit: int = 10) -> list[dict]:
-    """Search Wikidata for registered companies/organisations by name."""
+    """Search Wikidata for registered companies/organisations by name.
+
+    The country (P17) and OpenCorporates (P1320) OPTIONALs can each return an
+    entity over several rows, so results are merged by QID — filling in the
+    jurisdiction / registration number from whichever row carries them.
+    """
     data = await run_sparql(_entity_search_query(name, limit))
-    seen: set[str] = set()
-    out: list[dict] = []
+    by_qid: dict[str, dict] = {}
+    order: list[str] = []
     for b in data.get("results", {}).get("bindings", []):
         uri = b.get("item", {}).get("value", "")
         qid = uri.rsplit("/", 1)[-1] if uri else None
-        if qid and qid in seen:  # the country OPTIONAL can duplicate an entity
+        if not qid:
             continue
-        if qid:
-            seen.add(qid)
         # The label service echoes the QID when there's no label; treat that as
         # unusable so the provider skips it.
         label = b.get("itemLabel", {}).get("value")
@@ -104,16 +118,28 @@ async def search_entities(name: str, limit: int = 10) -> list[dict]:
         except (TypeError, ValueError):
             sitelinks = 0
         cc = b.get("cc", {}).get("value")
-        out.append(
-            {
+        reg_number = _registration_number(b.get("ocid", {}).get("value"))
+
+        if qid not in by_qid:
+            order.append(qid)
+            by_qid[qid] = {
                 "qid": qid,
                 "label": label,
                 "description": b.get("itemDescription", {}).get("value"),
-                "url": f"{ENTITY_WEB}/{qid}" if qid else None,
+                "url": f"{ENTITY_WEB}/{qid}",
                 "sitelinks": sitelinks,
                 "jurisdiction": cc.upper() if cc else None,
+                # Official registry number when Wikidata has one (else None) — a
+                # QID is NOT a registration number, so it never lands here.
+                "registration_number": reg_number,
             }
-        )
-        if len(out) >= min(max(limit, 1), 50):
-            break
-    return out
+        else:
+            e = by_qid[qid]
+            e["label"] = e["label"] or label
+            e["description"] = e["description"] or b.get("itemDescription", {}).get("value")
+            e["jurisdiction"] = e["jurisdiction"] or (cc.upper() if cc else None)
+            e["registration_number"] = e["registration_number"] or reg_number
+            e["sitelinks"] = max(e["sitelinks"], sitelinks)
+
+    effective = min(max(limit, 1), 50)
+    return [by_qid[q] for q in order[:effective]]
