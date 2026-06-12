@@ -121,22 +121,21 @@ class ExtractionResult(BaseModel):
     abstention/calibration columns.
     """
 
+    # Truth-table column order: required minimum, Tier A, confidence_flag —
+    # then our extras (officers, numeric confidence) — and source LAST.
     query_id: str
     registry_id: str | None = None
     registry_court: str | None = None
     name_normalized_register_name: str | None = None
     jurisdiction_confirmed: str | None = None
     no_match_reason: str | None = None
-    # Tier A (often public)
     registered_address: str | None = None
     incorporation_date: str | None = None
     organization_type: str | None = None
     status: str | None = None
-    # Tier B (partial coverage)
-    officers: str | None = None
-    # Calibration / audit trail
-    confidence: float = 0.0
     confidence_flag: str | None = None  # verified | probable | ambiguous | not_found | error
+    officers: str | None = None  # Tier B
+    confidence: float = 0.0
     source: str | None = None
 
     @classmethod

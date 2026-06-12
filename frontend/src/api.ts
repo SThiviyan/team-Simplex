@@ -74,3 +74,61 @@ export async function csvSearch(rawQuery: string): Promise<CsvSearchResponse> {
   if (!r.ok) throw new Error(`search failed: ${r.status}`);
   return r.json();
 }
+
+// ---------------------------------------------------------------------------
+// Pipeline (registry-lookup chain): CSV upload, live run feed.
+
+export type PipelineRun = {
+  run_id: string;
+  started_at: number;
+  last_event_at: number;
+  event_count: number;
+  status: 'running' | 'completed';
+};
+
+export type PipelineEvent = {
+  seq: number;
+  query_id: string | null;
+  ts: number;
+  event_type: string;
+  payload: Record<string, unknown>;
+};
+
+export async function listRuns(): Promise<PipelineRun[]> {
+  const r = await fetch('/api/pipeline/runs');
+  if (!r.ok) throw new Error(`runs failed: ${r.status}`);
+  const data = await r.json();
+  return data.runs as PipelineRun[];
+}
+
+export async function runEvents(
+  runId: string,
+  after: number,
+): Promise<{ events: PipelineEvent[]; last_seq: number }> {
+  const url = new URL(`/api/pipeline/runs/${runId}/events`, window.location.origin);
+  url.searchParams.set('after', String(after));
+  const r = await fetch(url.toString());
+  if (!r.ok) throw new Error(`events failed: ${r.status}`);
+  return r.json();
+}
+
+/**
+ * Upload a query CSV (query_id,name,jurisdiction), run the whole pipeline,
+ * and resolve with the finished result CSV as a Blob plus its filename.
+ * The promise resolves only when the batch is done — poll listRuns/runEvents
+ * in parallel to show live progress.
+ */
+export async function uploadPipelineCsv(
+  file: File,
+): Promise<{ blob: Blob; filename: string }> {
+  const body = new FormData();
+  body.append('file', file);
+  const r = await fetch('/api/pipeline/run-csv', { method: 'POST', body });
+  if (!r.ok) {
+    const detail = await r.text().catch(() => '');
+    throw new Error(`pipeline failed: ${r.status} ${detail.slice(0, 200)}`);
+  }
+  const disposition = r.headers.get('content-disposition') ?? '';
+  const m = /filename="?([^";]+)"?/.exec(disposition);
+  return { blob: await r.blob(), filename: m?.[1] ?? 'results.csv' };
+}

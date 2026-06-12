@@ -65,7 +65,7 @@ def test_mcp_registry_routes_to_internal_endpoints():
     # State-level codes route to the parent country's bucket.
     assert get_mcp_servers("US-CA")[-1].url == "internal:us"
     # Uncovered countries land on the global bucket (GLEIF/Wikidata).
-    assert get_mcp_servers("UK")[-1].url == "internal:global"
+    assert get_mcp_servers("UK")[-1].url == "internal:gb"  # alias routes to GB bucket
     assert get_mcp_servers("CH")[-1].url == "internal:global"
 
 

@@ -110,3 +110,29 @@ def test_matching_records_tolerates_leading_zeros():
     row = _row(registry_id="445790")
     rec = _record(registry_id="00445790", provider="gleif")
     assert matching_records(row, [rec])
+
+
+def test_impressum_extracts_mandated_facts():
+    from app.integrations.impressum import extract_company_facts
+
+    text = """Impressum
+    posylka.de GmbH
+    Overhagener Weg 36, 59597 Erwitte
+    Geschäftsführer: Maxim Acht
+    Registergericht: Amtsgericht Paderborn HRB 10033
+    USt-IdNr.: DE266929333
+    """
+    facts = extract_company_facts(text)
+    assert facts["registry_id"] == "HRB 10033"
+    assert facts["registry_court"] == "Amtsgericht Paderborn"
+    assert facts["officers"] == "Geschäftsführer: Maxim Acht"
+    assert facts["vat_number"] == "DE266929333"
+    assert facts["registered_address"] == "Overhagener Weg 36, 59597 Erwitte"
+
+    # Austrian Firmenbuch pattern.
+    at = extract_company_facts("Firmenbuchnummer: FN 56247t, Landesgericht Salzburg")
+    assert at["registry_id"] == "FN 56247t"
+    assert at["registry_court"] == "Landesgericht Salzburg"
+
+    # A bare contact page (address only) yields no register facts.
+    assert "registry_id" not in extract_company_facts("Kontakt: Musterweg 1, 12345 Berlin")

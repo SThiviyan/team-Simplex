@@ -6,12 +6,16 @@ each covers.
 """
 
 from app.search.base import SearchProvider
+from app.search.providers.ajpes import AjpesSearchProvider
 from app.search.providers.annuaire import AnnuaireSearchProvider
+from app.search.providers.ares import AresSearchProvider
 from app.search.providers.brreg import BrregSearchProvider
+from app.search.providers.companies_house import CompaniesHouseSearchProvider
 from app.search.providers.cro import CroSearchProvider
 from app.search.providers.cvr import CvrSearchProvider
 from app.search.providers.gleif import GleifSearchProvider
 from app.search.providers.handelsregister import HandelsregisterSearchProvider
+from app.search.providers.nzbn import NzbnSearchProvider
 from app.search.providers.prh import PrhSearchProvider
 from app.search.providers.sec import SecSearchProvider
 from app.search.providers.wikidata import WikidataSearchProvider
@@ -29,4 +33,8 @@ def all_providers() -> list[SearchProvider]:
         CroSearchProvider(),  # IE
         SecSearchProvider(),  # US
         PrhSearchProvider(),  # FI
+        CompaniesHouseSearchProvider(),  # GB (keyed; self-disables without key)
+        AresSearchProvider(),  # CZ
+        AjpesSearchProvider(),  # SI (keyed; self-disables without credentials)
+        NzbnSearchProvider(),  # NZ (keyed; self-disables without key)
     ]

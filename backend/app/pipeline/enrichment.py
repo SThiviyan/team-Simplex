@@ -169,11 +169,14 @@ def _missing_fields(result: ExtractionResult) -> list[str]:
     return [f for f in ENRICHABLE_FIELDS if not getattr(result, f)]
 
 
-async def _cross_reference(result: ExtractionResult, matched: list[dict]) -> ExtractionResult:
-    """Pass 2: follow LEI/QID cross-references the gather layer surfaced."""
-    if not _missing_fields(result):
-        return result
+async def _cross_reference(
+    result: ExtractionResult, matched: list[dict]
+) -> tuple[ExtractionResult, dict]:
+    """Pass 2: follow LEI/QID cross-references the gather layer surfaced.
 
+    Also returns the raw Wikidata details so pass 2.5 (Impressum) can reuse
+    the official website / Wikipedia article without a second lookup."""
+    details: dict = {}
     qid = next((r["metadata"].get("qid") for r in matched if r.get("metadata", {}).get("qid")), None)
     if qid:
         try:
@@ -218,7 +221,87 @@ async def _cross_reference(result: ExtractionResult, matched: list[dict]) -> Ext
                 updates["status"] = normalize_status(entity["entity_status"])
             if updates:
                 result = result.model_copy(update=updates)
-    return result
+    return result, details
+
+
+async def _impressum_fill(
+    result: ExtractionResult,
+    query: QueryRow,
+    records: list[dict],
+    details: dict,
+    run_id: str,
+) -> tuple[ExtractionResult, dict | None]:
+    """Pass 2.5 — the deterministic alternative path: the company's own
+    website. DE/AT law mandates register number + court + representatives in
+    the Impressum, so one HTTP fetch + regexes yields registry-grade facts
+    with no LLM call. Used both to FILL missing fields and to CORROBORATE an
+    existing registry_id (an independent agreeing source upgrades the flag).
+
+    Returns the (possibly updated) result plus a synthetic evidence record
+    (provider='impressum') when the page agreed on the registry_id."""
+    website = details.get("website")
+    if not website:
+        return result, None
+    wants_fill = bool(
+        {"registry_court", "officers", "registered_address"} & set(_missing_fields(result))
+        or not result.registry_id
+    )
+    if not wants_fill and not result.registry_id:
+        return result, None
+    try:
+        from app.integrations.impressum import fetch_impressum
+
+        hit = await fetch_impressum(website)
+    except Exception:
+        logger.exception("impressum fetch failed for %s", query.query_id)
+        return result, None
+    if hit is None:
+        return result, None
+    url, facts = hit
+
+    evidence: dict | None = None
+    impressum_id = facts.get("registry_id")
+    updates: dict = {}
+    if impressum_id and result.registry_id and _ids_match(result.registry_id, impressum_id):
+        # Independent corroboration of the ID by the company's own site.
+        evidence = {
+            "registry_id": impressum_id,
+            "name_normalized_register_name": result.name_normalized_register_name,
+            "provider": "impressum",
+            "source": url,
+            "metadata": {},
+        }
+    elif impressum_id and not result.registry_id:
+        # Identity came from the website Wikidata links for this entity; the
+        # Impressum is legally required to state THIS company's register entry.
+        updates["registry_id"] = impressum_id
+        updates["no_match_reason"] = None
+        evidence = {
+            "registry_id": impressum_id,
+            "name_normalized_register_name": result.name_normalized_register_name,
+            "provider": "impressum",
+            "source": url,
+            "metadata": {},
+        }
+    for field, key in (
+        ("registry_court", "registry_court"),
+        ("officers", "officers"),
+        ("registered_address", "registered_address"),
+    ):
+        if facts.get(key) and not getattr(result, field):
+            updates[field] = facts[key]
+    if updates:
+        if not result.source:
+            updates.setdefault("source", url)
+        result = result.model_copy(update=updates)
+    if evidence is not None:
+        records.append(evidence)
+    await event_log.log_event(
+        run_id, "impressum_checked", query.query_id,
+        url=url, facts=sorted(facts.keys()),
+        corroborates=bool(evidence), filled=sorted(set(updates) - {"no_match_reason", "source"}),
+    )
+    return result, evidence
 
 
 _WEB_SYSTEM = """You are an enrichment agent in a KYB pipeline. The legal entity is ALREADY
@@ -381,10 +464,19 @@ async def enrich_result(
     has_identity = bool(result.registry_id or result.name_normalized_register_name)
     if has_identity and not settings.pipeline_mock:
         result = _merge_from_records(result, matched)
+        details: dict = {}
         try:
-            result = await _cross_reference(result, matched)
+            result, details = await _cross_reference(result, matched)
         except Exception:
             logger.exception("cross-reference enrichment failed for %s", query.query_id)
+        # Pass 2.5 — the company's own Impressum: deterministic, fast, and an
+        # INDEPENDENT corroborator of the registry_id (can upgrade the flag).
+        try:
+            result, evidence = await _impressum_fill(result, query, records, details, run_id)
+            if evidence is not None:
+                matched.append(evidence)
+        except Exception:
+            logger.exception("impressum enrichment failed for %s", query.query_id)
         # Web fill only for confidently identified entities: enriching the
         # wrong company is worse than returning blanks.
         if result.confidence >= 0.7 and _missing_fields(result):
@@ -400,8 +492,16 @@ async def enrich_result(
             )
 
     flag = _confidence_flag(result, matched)
+    # Output formatting LAST (after grounding/matching ran on raw values):
+    # reshape registry_id/court to the jurisdiction's conventional form
+    # ("56247t" -> "FN 56247 t", "Local Court Munich" -> "Amtsgericht München").
+    from app.search.registry_format import normalize_registry_court, normalize_registry_id
+
+    cc = (result.jurisdiction_confirmed or query.jurisdiction or "").split("-")[0]
     result = result.model_copy(
         update={
+            "registry_id": normalize_registry_id(cc, result.registry_id),
+            "registry_court": normalize_registry_court(cc, result.registry_court),
             "confidence_flag": flag,
             "confidence": round(min(result.confidence, _CONFIDENCE_CAPS[flag]), 2),
             "jurisdiction_confirmed": _echo_jurisdiction(result, query),

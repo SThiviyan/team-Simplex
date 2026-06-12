@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Country codes people commonly type vs. the ISO 3166-1 alpha-2 codes the
 # registries actually report. Without this, "Tesco, UK" filters out every GB
@@ -40,6 +40,32 @@ class SearchResult(BaseModel):
     incorporation_date: str | None = None  # registration/founding date when reported
     # Per-source signals the resolver can rank on, e.g. {"sitelinks": 87}.
     metadata: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _conform_registry_to_national_standard(self) -> "SearchResult":
+        """Reshape registry_id / registry_court to the jurisdiction's standard
+        form (e.g. DE -> "HRB 42243" / "Amtsgericht München"), regardless of
+        which provider produced them. Conservative: unrecognised values pass
+        through unchanged (see registry_format)."""
+        from app.search.registry_format import (
+            infer_jurisdiction,
+            normalize_date,
+            normalize_registry,
+            normalize_status,
+        )
+
+        # Trust what the entry itself says about its country (registered
+        # address, then description) over the server it was found on — e.g. a
+        # company returned by the French register whose address ends in
+        # "München, DE" is DE, not FR. Done first so the registry_id is
+        # formatted for the corrected jurisdiction.
+        self.jurisdiction = infer_jurisdiction(self.address, self.snippet) or self.jurisdiction
+        self.registry_id, self.registry_court = normalize_registry(
+            self.jurisdiction, self.registry_id, self.registry_court
+        )
+        self.status = normalize_status(self.status)
+        self.incorporation_date = normalize_date(self.incorporation_date)
+        return self
 
 
 class SearchProvider(ABC):

@@ -14,6 +14,18 @@ class Settings(BaseSettings):
         default=None, description="handelsregister.ai API key (sent as x-api-key)"
     )
 
+    # --- Optional keyed register sources (each provider disables itself when
+    # its key is unset, so the keyless stack keeps working) -------------------
+    uk_company_house_key: str | None = Field(
+        default=None, description="Companies House REST API key (free, HTTP Basic username)"
+    )
+    nzbn_api_key: str | None = Field(
+        default=None, description="NZBN API subscription key (Ocp-Apim-Subscription-Key)"
+    )
+    ajpes_user: str | None = Field(default=None, description="AJPES restPrsInfo username")
+    ajpes_password: str | None = Field(default=None, description="AJPES restPrsInfo password")
+    ajpes_schema: str | None = Field(default=None, description="AJPES authorised data-set code")
+
     # --- Pipeline (registry-lookup agent chain) ---
     # The Anthropic SDK reads ANTHROPIC_API_KEY from the environment itself.
     anthropic_model: str = Field(

@@ -123,7 +123,7 @@ async def search_entities(name: str, limit: int = 10) -> list[dict]:
 # P571 inception, P1454 legal form, P159 headquarters location, P6375 street
 # address, P576 dissolved/abolished, P169 CEO, P112 founder, P488 chairperson.
 _DETAIL_SPARQL = """
-SELECT ?inception ?legalFormLabel ?hqLabel ?street ?dissolved ?ceoLabel ?founderLabel ?chairLabel WHERE {{
+SELECT ?inception ?legalFormLabel ?hqLabel ?street ?dissolved ?ceoLabel ?founderLabel ?chairLabel ?website ?article WHERE {{
   OPTIONAL {{ wd:{qid} wdt:P571 ?inception . }}
   OPTIONAL {{ wd:{qid} wdt:P1454 ?legalForm . }}
   OPTIONAL {{ wd:{qid} wdt:P159 ?hq .
@@ -132,6 +132,9 @@ SELECT ?inception ?legalFormLabel ?hqLabel ?street ?dissolved ?ceoLabel ?founder
   OPTIONAL {{ wd:{qid} wdt:P169 ?ceo . }}
   OPTIONAL {{ wd:{qid} wdt:P112 ?founder . }}
   OPTIONAL {{ wd:{qid} wdt:P488 ?chair . }}
+  OPTIONAL {{ wd:{qid} wdt:P856 ?website . }}
+  OPTIONAL {{ ?article schema:about wd:{qid} ;
+                       schema:isPartOf <https://en.wikipedia.org/> . }}
   SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,mul". }}
 }}
 LIMIT 5
@@ -190,4 +193,12 @@ async def entity_details(qid: str) -> dict:
     ]
     if officers:
         out["officers"] = "; ".join(officers)
+    # Cross-reference targets for the alternative-path loop (Impressum scrape,
+    # Wikipedia citation), not output fields themselves.
+    website = _first(bindings, "website")
+    if website:
+        out["website"] = website
+    article = _first(bindings, "article")
+    if article:
+        out["wikipedia"] = article
     return out

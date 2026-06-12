@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { PipelinePanel } from './components/PipelinePanel';
 import { SearchBar } from './components/SearchBar';
 import { csvSearch, QueryRow, Winner } from './api';
 
@@ -46,6 +47,7 @@ export default function App() {
       <Header />
       <SearchBar onSubmit={runSearch} busy={busy} />
       <Results state={state} onRetry={() => state.kind === 'error' && runSearch(state.query)} />
+      <PipelinePanel />
     </Shell>
   );
 }

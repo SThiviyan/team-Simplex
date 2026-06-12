@@ -22,7 +22,7 @@ def test_bucket_routing():
     assert bucket_for_country("DE") == "de"
     assert bucket_for_country("de") == "de"
     assert bucket_for_country("US-CA") == "us"  # state code -> parent country
-    assert bucket_for_country("UK") == GLOBAL_BUCKET  # no national provider yet
+    assert bucket_for_country("UK") == "gb"  # Companies House provider -> GB bucket
     assert bucket_for_country(None) == GLOBAL_BUCKET
     assert server_for_bucket("nope") is None
 
