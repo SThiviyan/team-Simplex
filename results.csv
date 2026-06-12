@@ -1,0 +1,22 @@
+query_id,registry_id,registry_court,name_normalized_register_name,jurisdiction_confirmed,confidence,source,no_match_reason
+p001,00445790,Companies House,TESCO PLC,GB,0.95,https://find-and-update.company-information.service.gov.uk/company/00445790,
+p002,33011433,Kamer van Koophandel (KVK),Heineken N.V.,NL,0.6,https://www.kvk.nl/ - KVK number 33011433,
+p003,HRB 42243,Amtsgericht München,Bayerische Motoren Werke Aktiengesellschaft,DE-BY,0.95,https://www.online-handelsregister.de/handelsregisterauszug/by/Muenchen/HRB/42243/Bayerische-Motoren-Werke-Aktiengesellschaft,
+p004,HRB 6684,Amtsgericht München,Siemens Aktiengesellschaft,DE,0.4,https://www.handelsregister.de,
+p005,FN 167516 v,Landesgericht Salzburg,Red Bull GmbH,AT,0.7,"https://firmenbuch.justiz.gv.at/ (FN 167516 v, Red Bull GmbH, Fuschl am See)",
+p006,,,,,0.0,,"layer1_error: web_search: OverloadedError: Error code: 529 - {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}, 'request_id': 'req_0"
+p007,C0806592,California Secretary of State,Apple Inc.,US-CA,0.82,https://bizfileonline.sos.ca.gov/search/business,
+p008,4459477,Corporations Canada,Shopify Inc.,CA,0.55,https://www.ic.gc.ca/app/scr/cc/CorporationsCanada/fdrlCrpDtls.html?corpId=4459477,
+p009,632 012 100,RCS Paris,L'ORÉAL S.A.,FR,0.95,https://data.inpi.fr/entreprises/632012100,
+p010,0000028860,"Sąd Rejonowy dla m.st. Warszawy w Warszawie, XIII Wydział Gospodarczy Krajowego Rejestru Sądowego",ORLEN Spółka Akcyjna,PL,0.78,https://rejestr.io/krs/28860/pkn-orlen,
+p011,,,,,0.85,,not_in_registry
+p012,HRB 169227,Amtsgericht München,Wirecard AG,DE-BY,0.82,"https://www.handelsregister.de (Amtsgericht München HRB 169227, Wirecard AG)",
+p013,,,,,0.0,,ambiguous_candidates
+p014,HRB 719915,Amtsgericht Mannheim,SAP SE,DE-BW,0.93,"https://www.northdata.com/SAP%20SE,%20Walldorf/Amtsgericht%20Mannheim%20HRB%20719915",
+p015,HRB 3868,Amtsgericht Fürth,adidas AG,DE-BY,0.95,https://www.online-handelsregister.de/handelsregisterauszug/by/Fuerth/HRB/3868/adidas-AG,
+p016,556042-7220,Bolagsverket,H & M Hennes & Mauritz AB,SE,0.9,https://www.allabolag.se/foretag/h-m-hennes-mauritz-ab/stockholm/kontorstj%C3%A4nster/2JYJ93OI63II9,
+p017,,,,,0.0,,no candidates produced by the Layer-1 agent
+p018,22756214,"Det Centrale Virksomhedsregister (CVR), Erhvervsstyrelsen",A.P. Møller - Mærsk A/S,DK,0.92,"https://datacvr.virk.dk/enhed/virksomhed/22756214 ; https://www.northdata.com/A%C2%B7P%C2%B7%20M%C3%B8ller%20-%20M%C3%A6rsk%20A/S,%20K%C3%B8benhavn/CVR%2022756214",
+p019,104547,Companies Registration Office (CRO),Ryanair Designated Activity Company,IE,0.7,https://core.cro.ie/ - CRO company number 104547,
+p020,,,,,0.0,,"layer1_error: web_search: ValidationError: 1 validation error for ExtractionPayload
+  Invalid JSON: EOF while parsing a string at line 2 column 31222 [type=json_in"

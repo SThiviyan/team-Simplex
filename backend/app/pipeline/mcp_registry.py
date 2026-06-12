@@ -16,6 +16,9 @@ _COUNTRY_FILES = {
     "DE": "de.csv",
     "UK": "uk.csv",
     "GB": "uk.csv",
+    "US": "us.csv", 
+    "BR": "br.csv", 
+    "AT": "at.csv"
 }
 _FALLBACK_FILE = "extra_eu.csv"
 
