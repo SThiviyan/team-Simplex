@@ -56,16 +56,27 @@ async def csv_search_endpoint(
     q: str = Query(..., min_length=1, description="CSV text: rows of name,jurisdiction"),
     limit: int = Query(default=25, ge=1, le=50),
 ):
-    """Pass the frontend input to the gather orchestrator: parse `name,jurisdiction`
-    CSV, query every relevant source, and WRITE the gathered results to
-    search_results.json (consumed downstream by the pipeline).
+    """Pass the frontend input to the gather orchestrator, then run the matching
+    layer in-memory and return the winning company per query.
 
-    The gathered result rows are intentionally NOT returned to the caller — the
-    frontend view receives only an acknowledgement (how many records were written
-    and where), so it renders no result list.
+    Flow: parse `name,jurisdiction` CSV -> query every relevant source (gather
+    layer, also written to search_results.json) -> RapidFuzz gross filter + LLM
+    semantic filter (matching layer) -> winning candidate. The gathered records
+    are passed directly into the matching layer (no JSON round-trip), and the
+    `winners` are returned to the frontend so it can show the final result.
     """
+    from app.matching.pipeline import match_payload
+
     payload = await csv_search(app.state.providers, q, limit=limit)
-    # Drop the gathered rows from the HTTP response; they live in the JSON file now.
+    # Run the matching layer directly on the in-memory gathered records (the
+    # name/jurisdiction come from the same parsed input). No JSON reload.
+    # Mock when there's no key (or PIPELINE_MOCK) so the chain never hard-fails.
+    mock = settings.pipeline_mock or not os.environ.get("ANTHROPIC_API_KEY")
+    payload["winners"] = await match_payload(
+        payload, model=settings.anthropic_model, mock=mock
+    )
+    # Drop the raw gathered rows from the HTTP response; they live in the JSON
+    # file (and are summarised by `winners`/`count` here).
     payload.pop("results", None)
     return payload
 

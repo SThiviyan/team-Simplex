@@ -17,20 +17,42 @@ RECORD_WEB = "https://search.gleif.org/#/record"
 _HEADERS = {"Accept": "application/vnd.api+json"}
 
 
+def _format_address(addr: dict) -> str | None:
+    """Render a GLEIF legalAddress object into a single human-readable line."""
+    lines = addr.get("addressLines") or []
+    parts = [
+        ", ".join(line for line in lines if line),
+        addr.get("postalCode"),
+        addr.get("city"),
+        addr.get("region"),
+        addr.get("country"),
+    ]
+    joined = ", ".join(p for p in parts if p)
+    return joined or None
+
+
 def _normalise(rec: dict) -> dict:
     """Flatten one JSON:API lei-record into a compact dict."""
     a = rec.get("attributes", {})
     ent = a.get("entity", {})
     addr = ent.get("legalAddress") or {}
+    registration = a.get("registration") or {}
+    legal_form = ent.get("legalForm") or {}
+    # Prefer the free-text legal form ("other"); fall back to the ELF code id.
+    organization_type = legal_form.get("other") or legal_form.get("id")
     return {
         "lei": a.get("lei"),
         "name": (ent.get("legalName") or {}).get("name"),
         "entity_status": ent.get("status"),  # ACTIVE / INACTIVE
-        "registration_status": (a.get("registration") or {}).get("status"),  # ISSUED / LAPSED / ...
+        "registration_status": registration.get("status"),  # ISSUED / LAPSED / ...
         "city": addr.get("city"),
         "country": addr.get("country"),
         "jurisdiction": ent.get("jurisdiction"),
         "record_url": f"{RECORD_WEB}/{a.get('lei')}",
+        # Extra entity context for the final output / frontend.
+        "address": _format_address(addr),
+        "last_update": registration.get("lastUpdateDate"),
+        "organization_type": organization_type,
     }
 
 

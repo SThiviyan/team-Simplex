@@ -7,6 +7,10 @@ export type CompanyRecord = {
   confidence: number;
   source: string | null;
   no_match_reason: string | null;
+  // Extra entity context surfaced by the gather + matching layers.
+  last_update: string | null;
+  address: string | null;
+  organization_type: string | null;
   provider: string | null;
   snippet: string | null;
 };
@@ -18,12 +22,27 @@ export type QueryRow = {
   count: number;
 };
 
+// One winning result produced by the matching layer (RapidFuzz + LLM filter).
+export type Winner = {
+  query_id: string;
+  name: string;
+  jurisdiction: string | null;
+  decision: 'match' | 'no_match' | 'recursive_search';
+  winning_candidate: CompanyRecord | null;
+  confidence: number;
+  reasoning: string;
+  recursive_search: { suggested_query: string } | null;
+  candidates: CompanyRecord[];
+};
+
 export type CsvSearchResponse = {
   queries: QueryRow[];
   // How many records were gathered and written to the JSON file.
   count: number;
-  // The result rows are intentionally NOT returned to the frontend anymore — they
-  // are written server-side to `output_file` for the downstream pipeline to consume.
+  // The final per-query winners chosen by the matching layer.
+  winners: Winner[];
+  // The raw result rows are NOT returned — they are written server-side to
+  // `output_file` for provenance / the downstream pipeline.
   output_file?: string;
   output_file_error?: string;
 };

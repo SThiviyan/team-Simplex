@@ -44,9 +44,10 @@ def test_mcp_registry_country_mapping():
     assert [e.rank for e in de] == sorted(e.rank for e in de)
 
     assert get_mcp_servers("UK") == get_mcp_servers("GB")
-    # Unknown countries fall into the extra_eu bucket
-    assert get_mcp_servers("CH") == get_mcp_servers("US")
+    # Countries without their own file fall into the extra_eu bucket
     assert get_mcp_servers("CH")[0].name == "gleif-mcp"
+    # Mapped countries whose CSV doesn't exist yet degrade to an empty list
+    assert get_mcp_servers("US") == []
 
 
 def test_placeholder_detection():

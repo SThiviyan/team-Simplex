@@ -138,6 +138,10 @@ def _to_record(query_id: str, query_name: str, r: SearchResult) -> dict:
         ),
         "source": _citation(r),
         "no_match_reason": None if r.registry_id else "not_in_registry",
+        # Extra entity context carried through to the matching layer / frontend.
+        "last_update": r.last_update,
+        "address": r.address,
+        "organization_type": r.organization_type,
         # Extra context (display + provenance) — beyond the required schema.
         "provider": r.source,
         "snippet": r.snippet,
@@ -154,6 +158,9 @@ def _no_match_record(query_id: str, query_name: str, jurisdiction: str | None) -
         "confidence": 0.0,
         "source": None,
         "no_match_reason": "not_in_registry",
+        "last_update": None,
+        "address": None,
+        "organization_type": None,
         "provider": None,
         "snippet": None,
     }

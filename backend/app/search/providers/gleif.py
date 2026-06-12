@@ -57,6 +57,9 @@ class GleifSearchProvider(SearchProvider):
                     jurisdiction=e.get("country"),
                     registry_id=e.get("lei"),
                     register_name=e.get("name"),
+                    last_update=e.get("last_update"),
+                    address=e.get("address"),
+                    organization_type=e.get("organization_type"),
                 )
             )
         return results

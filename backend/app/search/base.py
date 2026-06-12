@@ -18,6 +18,11 @@ class SearchResult(BaseModel):
     registry_id: str | None = None
     registry_court: str | None = None
     register_name: str | None = None
+    # Extra entity context surfaced to the final output / frontend, when the
+    # source reports it. None when the source doesn't.
+    last_update: str | None = None       # when the source's data was last updated
+    address: str | None = None           # registered address of the company
+    organization_type: str | None = None  # legal form / organization type (e.g. GmbH)
     # Per-source signals the resolver can rank on, e.g. {"sitelinks": 87}.
     metadata: dict = Field(default_factory=dict)
 

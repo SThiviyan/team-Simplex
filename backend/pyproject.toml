@@ -19,6 +19,8 @@ dependencies = [
     # Pipeline (app/pipeline/*): Claude agent + multipart upload for /api/pipeline/run-csv.
     "anthropic>=0.50",
     "python-multipart>=0.0.9",
+    # Matching layer (app/matching/*): RapidFuzz gross filter before the LLM.
+    "rapidfuzz>=3.0",
 ]
 
 [dependency-groups]
