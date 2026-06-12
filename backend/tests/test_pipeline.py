@@ -25,6 +25,15 @@ def isolated_event_db(tmp_path):
     event_log.configure(event_log.DEFAULT_DB_PATH)
 
 
+@pytest.fixture(autouse=True)
+def empty_search_cache():
+    from app.search import search_cache
+
+    search_cache.clear()
+    yield
+    search_cache.clear()
+
+
 def test_read_queries_skips_comments():
     queries = read_queries()
     assert len(queries) >= 3
@@ -90,6 +99,56 @@ async def test_country_alias_normalization():
     assert len(results) == 1 and results[0].jurisdiction == "GB"
 
 
+async def test_search_cache_dedupes_identical_queries():
+    from app.search.base import SearchProvider, SearchResult
+    from app.search.csv_search import search_jurisdiction
+
+    class CountingProvider(SearchProvider):
+        name = "counting"
+        jurisdictions = None
+        calls = 0
+
+        async def search(self, query, limit=10):
+            CountingProvider.calls += 1
+            return [
+                SearchResult(
+                    title="ACME GmbH", snippet="", score=0.9, source="counting",
+                    jurisdiction="DE", registry_id="HRB 1",
+                )
+            ]
+
+    provider = CountingProvider()
+    r1, _, _ = await search_jurisdiction([provider], "Acme", "DE", 10)
+    r2, _, _ = await search_jurisdiction([provider], "ACME ", "DE", 10)  # same after normalize
+    assert CountingProvider.calls == 1  # second call served from cache
+    assert r1 == r2
+    # Different query or limit -> live call
+    await search_jurisdiction([provider], "Acme", "DE", 20)
+    assert CountingProvider.calls == 2
+
+
+async def test_search_cache_never_caches_failures():
+    from app.search.base import SearchProvider
+    from app.search.search_cache import cached_search
+
+    class FlakyProvider(SearchProvider):
+        name = "flaky"
+        jurisdictions = None
+        calls = 0
+
+        async def search(self, query, limit=10):
+            FlakyProvider.calls += 1
+            if FlakyProvider.calls == 1:
+                raise RuntimeError("registry down")
+            return []
+
+    provider = FlakyProvider()
+    with pytest.raises(RuntimeError):
+        await cached_search(provider, "Acme", 10)
+    assert await cached_search(provider, "Acme", 10) == []  # retried live, then cached
+    assert FlakyProvider.calls == 2
+
+
 def test_grounding_blanks_unbacked_registry_ids():
     from app.pipeline.agent import UNGROUNDED_REASON, apply_grounding
 
@@ -114,6 +173,50 @@ def test_grounding_blanks_unbacked_registry_ids():
     grounded_payload = payload.model_copy(update={"registry_id": "HRB 1234"})
     kept, grounded = apply_grounding(grounded_payload, trace)
     assert grounded and kept.registry_id == "HRB 1234"
+
+
+def test_grounding_replaces_fabricated_source_urls():
+    from app.pipeline.agent import apply_grounding
+
+    payload = ExtractionPayload(
+        registry_id="HRB 1234",
+        registry_court="Amtsgericht München",
+        name_normalized_register_name="Echt GmbH",
+        jurisdiction_confirmed="DE",
+        confidence=0.9,
+        source="https://made-up.example/echt-gmbh",
+        no_match_reason=None,
+        reasoning="match",
+    )
+    trace = [{"tool": "search_companies", "output": '{"results": [{"registry_id": "HRB 1234"}]}'}]
+
+    # The ID is grounded, but the cited URL never appeared in a tool result:
+    # it is swapped for the registry document reference (court + number).
+    kept, grounded = apply_grounding(payload, trace)
+    assert grounded and kept.registry_id == "HRB 1234"
+    assert kept.source == "Amtsgericht München HRB 1234"
+
+    # A URL that DID appear in a tool result passes through untouched.
+    url = "https://search.gleif.org/#/record/X"
+    trace_with_url = trace + [{"tool": "search_companies", "output": f'{{"url": "{url}"}}'}]
+    kept, _ = apply_grounding(payload.model_copy(update={"source": url}), trace_with_url)
+    assert kept.source == url
+
+    # Non-URL document references are not URL-checked.
+    doc_ref = payload.model_copy(update={"source": "Amtsgericht München HRB 1234"})
+    kept, _ = apply_grounding(doc_ref, trace)
+    assert kept.source == "Amtsgericht München HRB 1234"
+
+
+def test_mcp_registry_falls_back_when_country_csv_is_missing():
+    # US/BR/AT are mapped to CSV files that don't exist yet — they must fall
+    # back to the extra_eu list instead of silently getting no external entries.
+    for cc, bucket in (("US", "us"), ("BR", "global"), ("AT", "global")):
+        entries = get_mcp_servers(cc)
+        assert entries[-1].url == f"internal:{bucket}"
+        external = entries[:-1]
+        assert external, f"{cc} should inherit the extra_eu fallback entries"
+        assert all(e.is_placeholder for e in external)
 
 
 def _pwc_records():

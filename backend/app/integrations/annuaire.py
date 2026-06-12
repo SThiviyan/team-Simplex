@@ -4,7 +4,7 @@ Free, keyless open API run by DINUM.
 Docs: https://recherche-entreprises.api.gouv.fr/docs
 """
 
-import httpx
+from app.integrations.http import shared_client
 
 API = "https://recherche-entreprises.api.gouv.fr/search"
 WEB = "https://annuaire-entreprises.data.gouv.fr/entreprise"
@@ -13,14 +13,14 @@ _UA = "team-simplex-hackathon/1.0 (company search demo)"
 
 async def search_companies(name: str, limit: int = 10) -> list[dict]:
     """Search the French business directory by name."""
-    async with httpx.AsyncClient(
-        timeout=20.0, headers={"User-Agent": _UA, "Accept": "application/json"}
-    ) as client:
-        resp = await client.get(
-            API, params={"q": name, "per_page": max(1, min(limit, 25)), "page": 1}
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    client = shared_client(
+        "annuaire", timeout=20.0, headers={"User-Agent": _UA, "Accept": "application/json"}
+    )
+    resp = await client.get(
+        API, params={"q": name, "per_page": max(1, min(limit, 25)), "page": 1}
+    )
+    resp.raise_for_status()
+    data = resp.json()
 
     out: list[dict] = []
     for e in data.get("results", []):

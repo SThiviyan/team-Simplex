@@ -11,16 +11,25 @@ from app.pipeline.models import McpServerEntry
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 MCP_DIR = DATA_DIR / "mcp_servers"
 
-# Country code -> CSV file. Everything not listed falls into the extra_eu bucket.
+# Country code -> CSV file. Everything not listed (or whose file does not exist
+# yet) falls into the extra_eu bucket.
 _COUNTRY_FILES = {
     "DE": "de.csv",
     "UK": "uk.csv",
     "GB": "uk.csv",
-    "US": "us.csv", 
-    "BR": "br.csv", 
-    "AT": "at.csv"
+    "US": "us.csv",
+    "BR": "br.csv",
+    "AT": "at.csv",
 }
 _FALLBACK_FILE = "extra_eu.csv"
+
+
+def _csv_path_for(cc: str) -> Path:
+    """Country file when it exists on disk, else the extra_eu fallback file."""
+    path = MCP_DIR / _COUNTRY_FILES.get(cc.split("-")[0], _FALLBACK_FILE)
+    if not path.is_file():
+        path = MCP_DIR / _FALLBACK_FILE
+    return path
 
 
 def _read_csv_skipping_comments(path: Path) -> list[dict[str, str]]:
@@ -40,8 +49,7 @@ def get_mcp_servers(country_code: str) -> list[McpServerEntry]:
     from app.mcp_servers.country_endpoints import bucket_for_country
 
     cc = country_code.strip().upper()
-    filename = _COUNTRY_FILES.get(cc.split("-")[0], _FALLBACK_FILE)
-    path = MCP_DIR / filename
+    path = _csv_path_for(cc)
     entries: list[McpServerEntry] = []
     if path.is_file():
         entries = [McpServerEntry(**row) for row in _read_csv_skipping_comments(path)]

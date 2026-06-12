@@ -5,7 +5,7 @@ name search. Covers SEC-registered (public) US companies. The SEC requires a
 descriptive User-Agent. Cached in-process so it's fetched at most once.
 """
 
-import httpx
+from app.integrations.http import shared_client
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 WEB = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK="
@@ -17,10 +17,10 @@ _cache: dict = {}
 
 async def _load() -> list[dict]:
     if _cache.get("rows") is None:
-        async with httpx.AsyncClient(timeout=30.0, headers={"User-Agent": _UA}) as client:
-            resp = await client.get(TICKERS_URL)
-            resp.raise_for_status()
-            _cache["rows"] = list(resp.json().values())
+        client = shared_client("sec", timeout=30.0, headers={"User-Agent": _UA})
+        resp = await client.get(TICKERS_URL)
+        resp.raise_for_status()
+        _cache["rows"] = list(resp.json().values())
     return _cache["rows"]
 
 

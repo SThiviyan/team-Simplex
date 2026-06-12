@@ -7,7 +7,7 @@ supported. Wikimedia REQUIRES a descriptive User-Agent.
 Shared by the Wikidata MCP server and the Wikidata search provider.
 """
 
-import httpx
+from app.integrations.http import shared_client
 
 SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
 ENTITY_WEB = "https://www.wikidata.org/wiki"
@@ -35,10 +35,10 @@ async def run_sparql(query: str) -> dict:
 
     HTTP/2 is required: WDQS's anti-bot WAF rejects HTTP/1.1 requests with 403.
     """
-    async with httpx.AsyncClient(http2=True, headers=_HEADERS, timeout=30.0) as client:
-        resp = await client.get(SPARQL_ENDPOINT, params={"query": query, "format": "json"})
-        resp.raise_for_status()
-        return resp.json()
+    client = shared_client("wikidata", http2=True, headers=_HEADERS, timeout=30.0)
+    resp = await client.get(SPARQL_ENDPOINT, params={"query": query, "format": "json"})
+    resp.raise_for_status()
+    return resp.json()
 
 
 # Roots whose subclass trees cover "anything registered as a company": business,

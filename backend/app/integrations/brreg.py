@@ -3,7 +3,7 @@
 Free, keyless open API. Docs: https://data.brreg.no/enhetsregisteret/api/docs
 """
 
-import httpx
+from app.integrations.http import shared_client
 
 API = "https://data.brreg.no/enhetsregisteret/api/enheter"
 WEB = "https://virksomhet.brreg.no/nb/oppslag/enheter"
@@ -12,12 +12,12 @@ _UA = "team-simplex-hackathon/1.0 (company search demo)"
 
 async def search_companies(name: str, limit: int = 10) -> list[dict]:
     """Search the Norwegian business register by name."""
-    async with httpx.AsyncClient(
-        timeout=20.0, headers={"User-Agent": _UA, "Accept": "application/json"}
-    ) as client:
-        resp = await client.get(API, params={"navn": name, "size": max(1, min(limit, 50))})
-        resp.raise_for_status()
-        data = resp.json()
+    client = shared_client(
+        "brreg", timeout=20.0, headers={"User-Agent": _UA, "Accept": "application/json"}
+    )
+    resp = await client.get(API, params={"navn": name, "size": max(1, min(limit, 50))})
+    resp.raise_for_status()
+    data = resp.json()
 
     out: list[dict] = []
     for e in data.get("_embedded", {}).get("enheter", []):

@@ -3,9 +3,11 @@
 Docs: https://avoindata.prh.fi/  (opendata-ytj-api v3)
 """
 
-import httpx
+from app.integrations.http import shared_client
 
 API = "https://avoindata.prh.fi/opendata-ytj-api/v3/companies"
+# Official YTJ company page for a Y-tunnus — the citable public register view.
+WEB = "https://tietopalvelu.ytj.fi/yritys"
 _UA = "team-simplex-hackathon/1.0 (company search demo)"
 
 
@@ -28,28 +30,29 @@ def _rank(query: str, name: str | None) -> int:
 
 async def search_companies(name: str, limit: int = 10) -> list[dict]:
     """Search the Finnish business register by name."""
-    async with httpx.AsyncClient(
-        timeout=25.0, headers={"User-Agent": _UA, "Accept": "application/json"}
-    ) as client:
-        resp = await client.get(API, params={"name": name})
-        resp.raise_for_status()
-        data = resp.json()
+    client = shared_client(
+        "prh", timeout=25.0, headers={"User-Agent": _UA, "Accept": "application/json"}
+    )
+    resp = await client.get(API, params={"name": name})
+    resp.raise_for_status()
+    data = resp.json()
 
     rows: list[dict] = []
     for co in data.get("companies", []):
         cur = _current_name(co.get("names") or [])
         if not cur:
             continue
+        business_id = (co.get("businessId") or {}).get("value")  # Y-tunnus
         rows.append(
             {
-                "number": (co.get("businessId") or {}).get("value"),  # Y-tunnus
+                "number": business_id,
                 "name": cur,
                 "legal_form": None,
                 "city": None,
                 "status": None,
                 "country": "FI",
                 "court": None,
-                "url": None,
+                "url": f"{WEB}/{business_id}" if business_id else None,
             }
         )
     # Surface companies whose current name matches the query first.

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from app.search.base import SearchProvider, SearchResult, normalize_country
 from app.search.resolver import _normalise
+from app.search.search_cache import cached_search
 
 # Lands at backend/search_results.json — inside the bind-mounted repo, so it
 # shows up in the IDE.
@@ -90,7 +91,7 @@ async def _gather(
     selected: list[SearchProvider], name: str, jurisdiction: str | None, limit: int
 ) -> list[SearchResult]:
     batches = await asyncio.gather(
-        *(p.search(name, limit=limit) for p in selected), return_exceptions=True
+        *(cached_search(p, name, limit) for p in selected), return_exceptions=True
     )
     results: list[SearchResult] = []
     for b in batches:

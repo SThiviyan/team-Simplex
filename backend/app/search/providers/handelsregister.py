@@ -25,19 +25,24 @@ class HandelsregisterSearchProvider(SearchProvider):
         results: list[SearchResult] = []
         for i, r in enumerate(rows[:limit]):
             reg = r.get("register_number")
+            court = r.get("court")
+            # The portal has no per-record permalink (session-based JSF), so the
+            # citation is the official registry document reference — court +
+            # register number retrieves exactly this entry on the portal.
+            doc_ref = f"{court} {reg}" if court and reg else None
             snippet = " · ".join(
-                x for x in [r.get("court"), r.get("status"), "DE"] if x
+                x for x in [doc_ref or court, r.get("status"), "DE"] if x
             )
             results.append(
                 SearchResult(
                     title=f"{r['name']} ({reg})" if reg else r["name"],
-                    url=None,
+                    url=handelsregister.START_URL,
                     snippet=snippet,
                     score=round(max(0.4, 0.95 - i * 0.04), 4),
                     source=self.name,
                     jurisdiction="DE",  # this register is German by definition
                     registry_id=reg,
-                    registry_court=r.get("court"),
+                    registry_court=court,
                     register_name=r["name"],
                 )
             )

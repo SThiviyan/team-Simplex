@@ -23,6 +23,7 @@ from mcp.server.fastmcp import FastMCP
 
 from app.search.base import SearchProvider
 from app.search.csv_search import search_jurisdiction
+from app.search.search_cache import cached_search
 from app.search.sources import all_providers
 
 GLOBAL_BUCKET = "global"
@@ -78,7 +79,7 @@ def _build_server(providers: list[SearchProvider], cc: str | None) -> FastMCP:
         if provider is None:
             return []
         try:
-            return [r.model_dump() for r in await provider.search(name, limit=limit)]
+            return [r.model_dump() for r in await cached_search(provider, name, limit)]
         except Exception:
             # Provider failures are non-fatal — same philosophy as FederatedSearch.
             return []

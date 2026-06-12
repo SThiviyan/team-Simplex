@@ -10,7 +10,7 @@ request/normalisation logic lives in one place.
 
 import asyncio
 
-import httpx
+from app.integrations.http import shared_client
 
 API_BASE = "https://api.gleif.org/api/v1"
 # Public, human-readable LEI record page.
@@ -68,30 +68,30 @@ async def search_entities(name: str, limit: int = 10) -> list[dict]:
     """
     size = max(1, min(limit, 100))
     page = {"page[size]": size, "page[number]": 1}
-    async with httpx.AsyncClient(base_url=API_BASE, headers=_HEADERS, timeout=20.0) as client:
-        legal_resp, full_resp = await asyncio.gather(
-            client.get("/lei-records", params={"filter[entity.legalName]": name, **page}),
-            client.get("/lei-records", params={"filter[fulltext]": name, **page}),
-            return_exceptions=True,
-        )
-        entities: list[dict] = []
-        seen: set[str] = set()
-        for resp in (legal_resp, full_resp):
-            if isinstance(resp, BaseException):
-                continue  # one search path failing must not kill the other
-            resp.raise_for_status()
-            for rec in resp.json().get("data", []):
-                e = _normalise(rec)
-                key = e.get("lei") or e.get("name") or ""
-                if key and key not in seen:
-                    seen.add(key)
-                    entities.append(e)
-        return entities[:size]
+    client = shared_client("gleif", base_url=API_BASE, headers=_HEADERS, timeout=20.0)
+    legal_resp, full_resp = await asyncio.gather(
+        client.get("/lei-records", params={"filter[entity.legalName]": name, **page}),
+        client.get("/lei-records", params={"filter[fulltext]": name, **page}),
+        return_exceptions=True,
+    )
+    entities: list[dict] = []
+    seen: set[str] = set()
+    for resp in (legal_resp, full_resp):
+        if isinstance(resp, BaseException):
+            continue  # one search path failing must not kill the other
+        resp.raise_for_status()
+        for rec in resp.json().get("data", []):
+            e = _normalise(rec)
+            key = e.get("lei") or e.get("name") or ""
+            if key and key not in seen:
+                seen.add(key)
+                entities.append(e)
+    return entities[:size]
 
 
 async def get_entity(lei: str) -> dict:
     """Fetch a single LEI record by its 20-character LEI code."""
-    async with httpx.AsyncClient(base_url=API_BASE, headers=_HEADERS, timeout=20.0) as client:
-        resp = await client.get(f"/lei-records/{lei.strip().upper()}")
-        resp.raise_for_status()
-        return _normalise(resp.json().get("data", {}))
+    client = shared_client("gleif", base_url=API_BASE, headers=_HEADERS, timeout=20.0)
+    resp = await client.get(f"/lei-records/{lei.strip().upper()}")
+    resp.raise_for_status()
+    return _normalise(resp.json().get("data", {}))

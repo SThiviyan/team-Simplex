@@ -25,7 +25,10 @@ from app.pipeline.models import ExtractionPayload, ExtractionResult, McpServerEn
 logger = logging.getLogger(__name__)
 
 MAX_PAUSE_TURN_CONTINUATIONS = 5
-MAX_TOOL_ROUNDS = 8
+# Hardest observed case (PwC) needed 3 rounds; 5 leaves headroom while stopping
+# a confused agent from burning 8 Opus calls on one row. On cap-hit the entry
+# returns None and the walk/fallback continues exactly as before.
+MAX_TOOL_ROUNDS = 5
 
 # no_match_reason prefix marking "the pipeline errored", as opposed to a genuine
 # registry no-match (not_in_registry / ambiguous_candidates / out_of_scope).
@@ -182,13 +185,33 @@ def _grounded(registry_id: str, trace: list[dict]) -> bool:
     return False
 
 
+def _ground_source(payload: ExtractionPayload, trace: list[dict]) -> ExtractionPayload:
+    """A cited URL must have literally appeared in a tool result — a fabricated
+    link is as bad as a fabricated ID. Replace an ungrounded URL with the
+    registry document reference (court + number), which IS tool-backed because
+    the registry_id grounding check already passed."""
+    source = payload.source or ""
+    if not source.startswith(("http://", "https://")) or _grounded(source, trace):
+        return payload
+    doc_ref = " ".join(x for x in (payload.registry_court, payload.registry_id) if x) or None
+    return payload.model_copy(
+        update={
+            "source": doc_ref,
+            "reasoning": f"Cited URL {source!r} did not appear in any tool result; "
+            "replaced with the registry document reference. " + payload.reasoning,
+        }
+    )
+
+
 def apply_grounding(
     payload: ExtractionPayload, trace: list[dict], *, web_search: bool = False
 ) -> tuple[ExtractionPayload, bool]:
     """Blank an ID the tools never returned. Web-search results can't be checked
     against a trace (the search runs server-side), so they pass through."""
-    if web_search or not payload.registry_id or _grounded(payload.registry_id, trace):
+    if web_search:
         return payload, True
+    if not payload.registry_id or _grounded(payload.registry_id, trace):
+        return _ground_source(payload, trace), True
     blanked = payload.model_copy(
         update={
             "registry_id": None,

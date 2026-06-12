@@ -5,7 +5,7 @@ best-matching company for a name search.
 Docs: https://cvrapi.dk/documentation
 """
 
-import httpx
+from app.integrations.http import shared_client
 
 API = "https://cvrapi.dk/api"
 WEB = "https://datacvr.virk.dk/enhed/virksomhed"
@@ -15,12 +15,12 @@ _UA = "team-simplex-hackathon/1.0 (Sinpex Hackathon company search demo)"
 
 async def search_companies(name: str, limit: int = 10) -> list[dict]:
     """Search the Danish CVR register by name (returns the best match)."""
-    async with httpx.AsyncClient(timeout=20.0, headers={"User-Agent": _UA}) as client:
-        resp = await client.get(API, params={"search": name, "country": "dk"})
-        if resp.status_code == 404:
-            return []
-        resp.raise_for_status()
-        d = resp.json()
+    client = shared_client("cvr", timeout=20.0, headers={"User-Agent": _UA})
+    resp = await client.get(API, params={"search": name, "country": "dk"})
+    if resp.status_code == 404:
+        return []
+    resp.raise_for_status()
+    d = resp.json()
 
     if not isinstance(d, dict) or d.get("error"):
         return []

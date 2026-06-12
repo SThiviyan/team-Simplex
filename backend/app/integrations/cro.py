@@ -10,12 +10,25 @@ companies are still covered well by the global GLEIF + Wikidata providers,
 which always run for IE queries; this adds whatever the open CRO dataset holds.
 """
 
-import httpx
+import json
+import urllib.parse
+
+from app.integrations.http import shared_client
 
 CKAN_SQL = "https://data.gov.ie/api/3/action/datastore_search_sql"
+CKAN_SEARCH = "https://data.gov.ie/api/3/action/datastore_search"
 # data.gov.ie "Company Records" (CRO) datastore-active resource.
 RESOURCE_ID = "3fef41bc-b8f4-4b10-8434-ce51c29b1bba"
 _UA = "team-simplex-hackathon/1.0 (company search demo)"
+
+
+def _record_url(company_num: int) -> str:
+    """Citable deep link: the official open-dataset record for this company
+    number (returns exactly this entry, verifiable in a browser)."""
+    query = urllib.parse.urlencode(
+        {"resource_id": RESOURCE_ID, "filters": json.dumps({"company_num": company_num})}
+    )
+    return f"{CKAN_SEARCH}?{query}"
 
 
 async def search_companies(name: str, limit: int = 10) -> list[dict]:
@@ -27,13 +40,13 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
         f'company_address_1, company_address_4 FROM "{RESOURCE_ID}" '
         f"WHERE company_name ILIKE '%{safe}%' LIMIT {n}"
     )
-    async with httpx.AsyncClient(
-        timeout=25.0, headers={"User-Agent": _UA, "Accept": "application/json"}
-    ) as client:
-        resp = await client.get(CKAN_SQL, params={"sql": sql})
-        if resp.status_code != 200:
-            return []
-        data = resp.json()
+    client = shared_client(
+        "cro", timeout=25.0, headers={"User-Agent": _UA, "Accept": "application/json"}
+    )
+    resp = await client.get(CKAN_SQL, params={"sql": sql})
+    if resp.status_code != 200:
+        return []
+    data = resp.json()
 
     if not data.get("success"):
         return []
@@ -48,7 +61,7 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
                 "city": e.get("company_address_4") or e.get("company_address_1"),
                 "status": e.get("company_status"),
                 "country": "IE",
-                "url": None,
+                "url": _record_url(num) if num is not None else None,
             }
         )
     return out
