@@ -84,16 +84,55 @@ async def csv_search_endpoint(
     are passed directly into the matching layer (no JSON round-trip), and the
     `winners` are returned to the frontend so it can show the final result.
     """
-    from app.matching.pipeline import match_payload
+    import asyncio
+
+    from app.matching.pipeline import match_payload, run_matching
+    from app.search.csv_search import _to_record, search_jurisdiction
 
     payload = await csv_search(app.state.providers, q, limit=limit)
     # Run the matching layer directly on the in-memory gathered records (the
     # name/jurisdiction come from the same parsed input). No JSON reload.
     # Mock when there's no key (or PIPELINE_MOCK) so the chain never hard-fails.
     mock = settings.pipeline_mock or not os.environ.get("ANTHROPIC_API_KEY")
-    payload["winners"] = await match_payload(
-        payload, model=settings.anthropic_model, mock=mock
-    )
+    winners = await match_payload(payload, model=settings.anthropic_model, mock=mock)
+
+    # Recursion (one round, parity with the pipeline): when the matcher flags
+    # "PwC" -> "PricewaterhouseCoopers", re-gather with the expanded name and
+    # re-match. The winner carries `recursion` so the UI can show why.
+    records_by_query: dict[str, list[dict]] = {}
+    for rec in payload.get("results") or []:
+        if rec.get("name_normalized_register_name"):
+            records_by_query.setdefault(rec.get("query_id"), []).append(rec)
+
+    for i, winner in enumerate(winners):
+        suggested = (winner.get("recursive_search") or {}).get("suggested_query")
+        if winner.get("decision") != "recursive_search" or not suggested:
+            continue
+        new_results, _, _ = await search_jurisdiction(
+            app.state.providers, suggested, winner.get("jurisdiction"), limit
+        )
+        combined = records_by_query.get(winner.get("query_id"), []) + [
+            _to_record(winner.get("query_id"), suggested, r) for r in new_results
+        ]
+        rematch = await asyncio.to_thread(
+            run_matching, combined, suggested, winner.get("jurisdiction") or "",
+            model=settings.anthropic_model, mock=mock,
+        )
+        winners[i] = {
+            "query_id": winner.get("query_id"),
+            "name": winner.get("name"),
+            "jurisdiction": winner.get("jurisdiction"),
+            **rematch,
+            "recursion": {
+                "expanded_from": winner.get("name"),
+                "suggested_query": suggested,
+                "cause": "abbreviation_expansion"
+                if winner.get("query_kind") == "abbreviation"
+                else "semantic_filter_flag",
+            },
+        }
+
+    payload["winners"] = winners
     # Drop the raw gathered rows from the HTTP response; they live in the JSON
     # file (and are summarised by `winners`/`count` here).
     payload.pop("results", None)

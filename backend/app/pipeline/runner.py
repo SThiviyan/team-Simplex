@@ -72,11 +72,13 @@ async def _run_matching(query: QueryRow, records: list[dict], run_id: str) -> di
         run_id, "eval_result", query.query_id,
         decision=match.get("decision"), confidence=match.get("confidence"),
         reasoning=match.get("reasoning"),
+        query_kind=match.get("query_kind"),
         kept_candidates=len(match.get("candidates") or []),
     )
     await event_log.log_event(
         run_id, "filter_result", query.query_id,
         records_in=len(records), candidates_kept=len(match.get("candidates") or []),
+        **(match.get("gross_filter") or {}),
     )
     return match
 
@@ -127,7 +129,15 @@ async def process_query(query: QueryRow, run_id: str) -> ExtractionResult:
         if not suggested:
             break
         await event_log.log_event(
-            run_id, "recursion_triggered", query.query_id, suggested_query=suggested
+            run_id, "recursion_triggered", query.query_id,
+            suggested_query=suggested,
+            expanded_from=query.name,
+            # Why the recursion started — for the UI: "abbreviation_expansion"
+            # means the query was abbreviation-shaped (e.g. "PwC") and the
+            # semantic filter suggested the expanded legal name.
+            cause="abbreviation_expansion"
+            if match.get("query_kind") == "abbreviation"
+            else "semantic_filter_flag",
         )
         requery = QueryRow(
             query_id=query.query_id, name=suggested, jurisdiction=query.jurisdiction

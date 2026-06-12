@@ -116,6 +116,127 @@ def test_grounding_blanks_unbacked_registry_ids():
     assert grounded and kept.registry_id == "HRB 1234"
 
 
+def _pwc_records():
+    """The 13 real records the gather layer returned for 'PwC, DE' (live data)."""
+    names = [
+        ("Betriebssport-Gemeinschaft PricewaterhouseCoopers Essen e. V.", "VR 4195"),
+        ("Konsortium PwC Deutschland eGbR", None),
+        ("PwC Strategy& (Germany) GmbH", "529900W1ZP04CIGY9R95"),
+        ("PwC IT Services Europe GmbH", "5299007RQMVQI2UO8U72"),
+        ("PWC Gesellschaft für medizinische Testverfahren im Sport mbH", "HRB 105486"),
+        ("PWC Holding GmbH", "HRB 20859"),
+        ("PWC Holding GmbH", "HRB 206501"),
+        ("Pflegedienst PWC Pflegen und Wohlfühlen Care OHG", "HRA 98305"),
+        ("PricewaterhouseCoopers Europe GmbH", "HRB 125771"),
+        ("PwC Advisory Europe GmbH", "HRB 126545"),
+        ("PwC Certification Services GmbH", "HRB 132988"),
+        ("PwC Cyber Security Services GmbH", "HRB 116391"),
+        ("Betriebskrankenkasse PricewaterhouseCoopers (BKK PwC)", "391200KAGMBFDCND5182"),
+    ]
+    return [
+        {
+            "query_id": "q1",
+            "registry_id": rid,
+            "registry_court": None,
+            "name_normalized_register_name": name,
+            "jurisdiction_confirmed": "DE",
+            "confidence": 0.6,
+            "source": "https://example.test",
+            "no_match_reason": None,
+        }
+        for name, rid in names
+    ]
+
+
+def test_abbreviation_query_survives_gross_filter():
+    """'PwC' must not lose all 13 gathered PwC records to the fuzzy cutoff."""
+    from app.matching.pipeline import run_matching
+
+    result = run_matching(_pwc_records(), "PwC", "DE", mock=True)
+    assert result["query_kind"] == "abbreviation"
+    assert result["gross_filter"]["scorer"] == "token_sort+partial"
+    assert result["gross_filter"]["candidates_kept"] > 0
+    assert result["decision"] == "match"
+    assert "pwc" in result["winning_candidate"]["name_normalized_register_name"].lower() or (
+        "pricewaterhouse" in result["winning_candidate"]["name_normalized_register_name"].lower()
+    )
+
+
+def test_specific_name_query_keeps_strict_filter():
+    from app.matching.pipeline import run_matching
+
+    result = run_matching(
+        _pwc_records(), "PricewaterhouseCoopers Europe GmbH", "DE", mock=True
+    )
+    assert result["query_kind"] == "specific-name"
+    assert result["gross_filter"]["scorer"] == "token_sort"
+    assert result["decision"] == "match"
+    assert result["winning_candidate"]["registry_id"] == "HRB 125771"
+
+
+async def test_agent_first_round_forces_tool_use(monkeypatch):
+    """The agent must search before answering — round 0 carries tool_choice=any."""
+    import json
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from app.pipeline import agent
+    from app.pipeline.models import McpServerEntry
+
+    payload_json = json.dumps(
+        {
+            "registry_id": None, "registry_court": None,
+            "name_normalized_register_name": None, "jurisdiction_confirmed": None,
+            "confidence": 0.0, "source": None,
+            "no_match_reason": "not_in_registry", "reasoning": "test",
+        }
+    )
+
+    calls: list[dict] = []
+
+    class FakeMessages:
+        async def create(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:  # forced search round -> pretend a tool was used
+                return SimpleNamespace(
+                    stop_reason="tool_use",
+                    content=[SimpleNamespace(type="tool_use", id="t1",
+                                             name="search_companies", input={"name": "x"})],
+                )
+            return SimpleNamespace(
+                stop_reason="end_turn",
+                content=[SimpleNamespace(type="text", text=payload_json)],
+            )
+
+    class FakeSession:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[])
+
+    @asynccontextmanager
+    async def fake_open_session(url, auth_token=None):
+        yield FakeSession()
+
+    async def fake_call_tool(session, name, arguments):
+        return '{"results": []}', {"results": []}
+
+    monkeypatch.setattr(agent, "open_session", fake_open_session)
+    monkeypatch.setattr(agent, "call_tool", fake_call_tool)
+
+    outcome = agent.Layer1Outcome()
+    query = QueryRow(query_id="t1", name="PwC", jurisdiction="DE")
+    entry = McpServerEntry(rank=1, name="test", url="internal:de")
+    result = await agent._mcp_attempt(
+        SimpleNamespace(messages=FakeMessages()), query, entry, outcome, "test-run"
+    )
+
+    assert calls[0]["tool_choice"] == {"type": "any"}
+    assert "output_config" not in calls[0]
+    assert "tool_choice" not in calls[1]
+    assert "output_config" in calls[1]
+    assert result is not None and result.no_match_reason == "not_in_registry"
+    assert len(outcome.trace) == 1  # the forced tool call was traced
+
+
 async def test_layer1_surfaces_attempt_errors(monkeypatch):
     """If every Layer-1 attempt raises, the error must surface in no_match_reason
     instead of masquerading as 'no candidates' / 'no match'."""

@@ -14,7 +14,10 @@ import asyncio
 import logging
 from typing import Any
 
+from rapidfuzz import fuzz
+
 from app.matching.company_matcher import (
+    DEFAULT_SCORER,
     Target,
     candidate_to_dict,
     find_candidates,
@@ -25,8 +28,22 @@ from app.matching.semantic_filter import (
     SemanticFilterError,
     semantic_filter,
 )
+from app.search.resolver import _looks_like_abbreviation
 
 logger = logging.getLogger(__name__)
+
+# Gross-filter gate used for abbreviation-shaped queries — partial matching
+# scores "pwc" vs "PwC Advisory Europe GmbH" at 1.0, but expansions like
+# "PricewaterhouseCoopers ..." still need a low gate to survive to the LLM.
+ABBREVIATION_SCORE_CUTOFF = 0.3
+
+
+def _abbreviation_scorer(a: str, b: str, *, processor=None, **kwargs) -> float:
+    """token_sort for normal similarity, partial for acronym-in-name hits."""
+    return max(
+        fuzz.token_sort_ratio(a, b, processor=processor),
+        fuzz.partial_ratio(a, b, processor=processor),
+    )
 
 
 def run_matching(
@@ -67,13 +84,37 @@ def run_matching(
     """
     target = Target(name=name, jurisdiction=jurisdiction)
 
+    # Abbreviation-shaped queries ("PwC", "BMW", "UBS") can never token-sort
+    # close to a full registered name like "PricewaterhouseCoopers Europe GmbH"
+    # — score them with partial matching too and a lower gate, so the gross
+    # filter doesn't drop exactly the candidates the semantic layer needs.
+    is_abbreviation = _looks_like_abbreviation(name)
+    if is_abbreviation:
+        scorer = _abbreviation_scorer
+        effective_cutoff = min(score_cutoff, ABBREVIATION_SCORE_CUTOFF)
+    else:
+        scorer = DEFAULT_SCORER
+        effective_cutoff = score_cutoff
+
     # ---- Layer 1: RapidFuzz gross filter (local, free) -------------------
-    fuzz_hits = find_candidates(records, target, top_n=top_n, score_cutoff=score_cutoff)
+    fuzz_hits = find_candidates(
+        records, target, top_n=top_n, score_cutoff=effective_cutoff, scorer=scorer
+    )
     candidates = [candidate_to_dict(c) for c in fuzz_hits]
 
     # ---- Layer 2: LLM semantic filter (calls Claude, unless mock) --------
     try:
-        result = semantic_filter(name, jurisdiction, candidates, model=model, mock=mock)
+        result = semantic_filter(
+            name,
+            jurisdiction,
+            candidates,
+            model=model,
+            mock=mock,
+            # An abbreviation that survived nothing is exactly the case where the
+            # LLM should still look: it can flag recursive_search with the
+            # expanded name ("PwC" -> "PricewaterhouseCoopers").
+            force_llm_on_empty=is_abbreviation,
+        )
     except SemanticFilterError as exc:
         # The chain must always produce a usable answer for the frontend. If the
         # LLM layer fails (no key, timeout, rate-limit, …), fall back to the top
@@ -97,8 +138,16 @@ def run_matching(
                 "recursive_search": None,
             }
 
-    # Expose the shortlist that fed the decision (useful for the UI / debugging).
+    # Expose the shortlist that fed the decision (useful for the UI / debugging),
+    # plus how the query was read — callers log recursion causes from this.
     result["candidates"] = candidates
+    result["query_kind"] = "abbreviation" if is_abbreviation else "specific-name"
+    result["gross_filter"] = {
+        "scorer": "token_sort+partial" if is_abbreviation else "token_sort",
+        "score_cutoff": effective_cutoff,
+        "records_in": len(records),
+        "candidates_kept": len(candidates),
+    }
     return result
 
 

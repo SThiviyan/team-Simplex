@@ -221,15 +221,21 @@ async def _mcp_attempt(
         )
         messages = [{"role": "user", "content": _user_prompt(query, f"MCP server '{entry.name}'")}]
 
-        for _ in range(MAX_TOOL_ROUNDS):
-            response = await client.messages.create(
+        for round_idx in range(MAX_TOOL_ROUNDS):
+            kwargs: dict = dict(
                 model=settings.anthropic_model,
                 max_tokens=16000,
                 system=_SYSTEM,
                 messages=messages,
                 tools=tools,
-                output_config={"format": _OUTPUT_FORMAT},
             )
+            if round_idx == 0:
+                # The agent MUST search before answering — an un-searched answer
+                # is ungrounded by construction and would only get blanked.
+                kwargs["tool_choice"] = {"type": "any"}
+            else:
+                kwargs["output_config"] = {"format": _OUTPUT_FORMAT}
+            response = await client.messages.create(**kwargs)
 
             if response.stop_reason == "refusal":
                 await event_log.log_event(run_id, "error", query.query_id, kind="refusal")

@@ -8,6 +8,8 @@ Shared by both the GLEIF MCP server and the GLEIF search provider so the
 request/normalisation logic lives in one place.
 """
 
+import asyncio
+
 import httpx
 
 API_BASE = "https://api.gleif.org/api/v1"
@@ -57,16 +59,34 @@ def _normalise(rec: dict) -> dict:
 
 
 async def search_entities(name: str, limit: int = 10) -> list[dict]:
-    """Search the LEI register by legal name. Returns normalised entity dicts."""
-    params = {
-        "filter[entity.legalName]": name,
-        "page[size]": max(1, min(limit, 100)),
-        "page[number]": 1,
-    }
+    """Search the LEI register by name. Returns normalised entity dicts.
+
+    Two queries, merged: legalName (best precision, keeps priority order) plus
+    fulltext, which also matches trading/other names — that's what finds the
+    flagship entity behind an acronym like "PwC", whose legalName is
+    "PricewaterhouseCoopers ..." and only carries the acronym as another name.
+    """
+    size = max(1, min(limit, 100))
+    page = {"page[size]": size, "page[number]": 1}
     async with httpx.AsyncClient(base_url=API_BASE, headers=_HEADERS, timeout=20.0) as client:
-        resp = await client.get("/lei-records", params=params)
-        resp.raise_for_status()
-        return [_normalise(r) for r in resp.json().get("data", [])]
+        legal_resp, full_resp = await asyncio.gather(
+            client.get("/lei-records", params={"filter[entity.legalName]": name, **page}),
+            client.get("/lei-records", params={"filter[fulltext]": name, **page}),
+            return_exceptions=True,
+        )
+        entities: list[dict] = []
+        seen: set[str] = set()
+        for resp in (legal_resp, full_resp):
+            if isinstance(resp, BaseException):
+                continue  # one search path failing must not kill the other
+            resp.raise_for_status()
+            for rec in resp.json().get("data", []):
+                e = _normalise(rec)
+                key = e.get("lei") or e.get("name") or ""
+                if key and key not in seen:
+                    seen.add(key)
+                    entities.append(e)
+        return entities[:size]
 
 
 async def get_entity(lei: str) -> dict:

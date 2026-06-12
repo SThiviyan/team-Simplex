@@ -324,6 +324,7 @@ def semantic_filter(
     max_tokens: int = 2048,
     timeout: float = 60.0,
     mock: bool = False,
+    force_llm_on_empty: bool = False,
 ) -> dict[str, Any]:
     """Run the LLM semantic filter over the RapidFuzz candidate list.
 
@@ -357,8 +358,11 @@ def semantic_filter(
     SemanticFilterError
         On API failure, model refusal, or an unparseable/invalid response.
     """
-    if not fuzz_candidates:
+    if not fuzz_candidates and not force_llm_on_empty:
         # Nothing to evaluate — short-circuit without burning an API call.
+        # Callers set force_llm_on_empty for abbreviation-shaped queries, where
+        # the LLM can still flag recursive_search with an expanded name even
+        # though zero candidates survived the fuzzy gate.
         return _empty_result("No candidates were provided by the fuzzy filter.")
 
     if mock:
