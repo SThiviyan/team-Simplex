@@ -21,6 +21,7 @@ frontend/dist/
 
 # Logs
 *.log
+backend/data/output/
 
 # Generated search output (openable in IDE)
 backend/search_results*.json

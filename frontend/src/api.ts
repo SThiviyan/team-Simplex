@@ -20,9 +20,12 @@ export type QueryRow = {
 
 export type CsvSearchResponse = {
   queries: QueryRow[];
+  // How many records were gathered and written to the JSON file.
   count: number;
-  results: CompanyRecord[];
+  // The result rows are intentionally NOT returned to the frontend anymore — they
+  // are written server-side to `output_file` for the downstream pipeline to consume.
   output_file?: string;
+  output_file_error?: string;
 };
 
 /**

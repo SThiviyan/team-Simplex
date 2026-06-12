@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { SearchBar } from './components/SearchBar';
-import { csvSearch, CompanyRecord, QueryRow } from './api';
+import { csvSearch, QueryRow } from './api';
 
 type State =
   | { kind: 'idle' }
   | { kind: 'loading'; query: string }
-  | { kind: 'ok'; query: string; results: CompanyRecord[]; queries: QueryRow[]; file?: string }
+  | { kind: 'ok'; query: string; count: number; queries: QueryRow[]; file?: string }
   | { kind: 'error'; query: string; message: string };
 
 export default function App() {
@@ -15,7 +15,7 @@ export default function App() {
     setState({ kind: 'loading', query: q });
     try {
       const r = await csvSearch(q);
-      setState({ kind: 'ok', query: q, results: r.results, queries: r.queries, file: r.output_file });
+      setState({ kind: 'ok', query: q, count: r.count, queries: r.queries, file: r.output_file });
     } catch (e) {
       setState({
         kind: 'error',
@@ -63,78 +63,64 @@ function Results({ state, onRetry }: { state: State; onRetry: () => void }) {
   if (state.kind === 'idle') return <IdleState />;
   if (state.kind === 'loading') return <LoadingState />;
   if (state.kind === 'error') return <ErrorState message={state.message} onRetry={onRetry} />;
-  if (state.results.length === 0) return <EmptyResultsState query={state.query} />;
 
+  // Results are no longer returned to the view — the backend gathers them and
+  // writes them to a JSON file for the downstream pipeline. Show what was
+  // gathered (count + destination) instead of a result list.
   const queryLabel = state.queries
     .map((q) => (q.jurisdiction ? `${q.name} [${q.jurisdiction}]` : q.name))
     .join(' · ');
 
+  return <WrittenState count={state.count} queryLabel={queryLabel} file={state.file} />;
+}
+
+function WrittenState({
+  count,
+  queryLabel,
+  file,
+}: {
+  count: number;
+  queryLabel: string;
+  file?: string;
+}) {
   return (
-    <section aria-label="Search results" className="space-y-0">
-      <p className="font-mono text-xs uppercase tracking-wider text-muted pb-1">
-        {state.results.length} result{state.results.length === 1 ? '' : 's'} · {queryLabel}
-      </p>
-      {state.file && (
-        <p className="font-mono text-[11px] text-muted pb-3">
-          written to <span className="text-ink/70">{state.file}</span>
+    <section aria-label="Search complete" className="space-y-3 animate-fade-in-up">
+      <div className="flex items-center gap-2 text-sm text-ink">
+        <CheckIcon className="text-accent" />
+        <span>
+          Gathered <span className="font-semibold tabular-nums">{count}</span> record
+          {count === 1 ? '' : 's'} for <span className="text-muted">{queryLabel}</span>.
+        </span>
+      </div>
+      {file ? (
+        <p className="font-mono text-[11px] text-muted">
+          written to <span className="text-ink/70">{file}</span>
         </p>
-      )}
-      <ul className="divide-y divide-line">
-        {state.results.map((r, i) => {
-          const isUrl = !!r.source && /^https?:\/\//.test(r.source);
-          const title =
-            r.name_normalized_register_name ?? `No match — ${r.no_match_reason ?? 'unknown'}`;
-          return (
-            <li
-              key={`${r.query_id}-${i}`}
-              style={{ animationDelay: `${i * 40}ms` }}
-              className="animate-fade-in-up py-5 first:pt-3"
-            >
-              <div className="flex items-baseline gap-4">
-                <h3 className="font-medium text-[17px] tracking-[-0.005em]">
-                  {isUrl ? (
-                    <a
-                      href={r.source!}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="hover:text-accent transition-colors duration-150"
-                    >
-                      {title}
-                    </a>
-                  ) : (
-                    <span className={r.name_normalized_register_name ? '' : 'text-muted'}>
-                      {title}
-                    </span>
-                  )}
-                </h3>
-                <span className="ml-auto shrink-0 flex items-baseline gap-2 font-mono text-[11px] tabular-nums text-muted">
-                  {r.jurisdiction_confirmed && (
-                    <span className="rounded bg-accent-soft/60 px-1.5 py-0.5 text-accent">
-                      {r.jurisdiction_confirmed}
-                    </span>
-                  )}
-                  {r.provider && (
-                    <span className="rounded bg-line/60 px-1.5 py-0.5 uppercase tracking-wide">
-                      {r.provider}
-                    </span>
-                  )}
-                  <span title="confidence">{Math.round(r.confidence * 100)}%</span>
-                </span>
-              </div>
-              <p className="mt-1.5 text-[15px] text-ink/75 text-balance max-w-prose">
-                {r.registry_id && (
-                  <span className="font-mono text-[13px] text-ink/60">
-                    {r.registry_id}
-                    {r.registry_court ? ` · ${r.registry_court}` : ''} ·{' '}
-                  </span>
-                )}
-                {r.snippet}
-              </p>
-            </li>
-          );
-        })}
-      </ul>
+      ) : null}
+      <p className="text-[13px] text-muted text-balance max-w-prose">
+        Results are no longer shown here — they are written server-side for the
+        downstream pipeline to consume.
+      </p>
     </section>
+  );
+}
+
+function CheckIcon({ className = '' }: { className?: string }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
   );
 }
 
@@ -166,14 +152,6 @@ function LoadingState() {
           </li>
         ))}
       </ul>
-    </section>
-  );
-}
-
-function EmptyResultsState({ query }: { query: string }) {
-  return (
-    <section className="pt-6 text-sm text-muted animate-fade-in-up">
-      No companies match <span className="text-ink">"{query}"</span>. Try a different name.
     </section>
   );
 }

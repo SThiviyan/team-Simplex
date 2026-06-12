@@ -1,9 +1,17 @@
+import os
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
+from app.config import settings
+from app.pipeline.csv_io import read_queries_text
+from app.pipeline.models import PipelineRunSummary, QueryRow
+from app.pipeline.runner import run_pipeline
 from app.search.csv_search import csv_search
 from app.search.orchestrator import FederatedSearch
 from app.search.resolver import CompanyResolver
@@ -47,9 +55,18 @@ async def csv_search_endpoint(
     q: str = Query(..., min_length=1, description="CSV text: rows of name,jurisdiction"),
     limit: int = Query(default=25, ge=1, le=50),
 ):
-    """Parse the query as `name,jurisdiction` CSV, include ALL matching results
-    (filtered to the jurisdiction when given), and write them to a JSON file."""
-    return await csv_search(app.state.providers, q, limit=limit)
+    """Pass the frontend input to the gather orchestrator: parse `name,jurisdiction`
+    CSV, query every relevant source, and WRITE the gathered results to
+    search_results.json (consumed downstream by the pipeline).
+
+    The gathered result rows are intentionally NOT returned to the caller — the
+    frontend view receives only an acknowledgement (how many records were written
+    and where), so it renders no result list.
+    """
+    payload = await csv_search(app.state.providers, q, limit=limit)
+    # Drop the gathered rows from the HTTP response; they live in the JSON file now.
+    payload.pop("results", None)
+    return payload
 
 
 @app.get("/api/resolve")
@@ -63,6 +80,68 @@ async def resolve(
     """Gather across jurisdiction-relevant sources and cross-reference into a
     most-likely match."""
     return await app.state.resolver.resolve(q, jurisdiction=jurisdiction, limit=limit)
+
+
+class PipelineQuery(BaseModel):
+    """A single search input: search query (name) + country code (jurisdiction)."""
+
+    query_id: str | None = None
+    name: str
+    jurisdiction: str
+
+
+class PipelineRunRequest(BaseModel):
+    query: PipelineQuery | None = Field(
+        default=None, description="Run a single ad-hoc input instead of the batch CSV"
+    )
+    limit: int | None = Field(
+        default=None, ge=1, description="Only process the first N rows of the batch CSV"
+    )
+
+
+def _require_pipeline_ready() -> None:
+    if not settings.pipeline_mock and not os.environ.get("ANTHROPIC_API_KEY"):
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY is not set (and PIPELINE_MOCK is off) — add it to .env",
+        )
+
+
+@app.post("/api/pipeline/run")
+async def pipeline_run(req: PipelineRunRequest | None = None) -> PipelineRunSummary:
+    """Run the registry-lookup chain: per-country MCP list -> agent -> filter -> Claude eval -> CSV."""
+    _require_pipeline_ready()
+    req = req or PipelineRunRequest()
+    queries = None
+    if req.query is not None:
+        queries = [
+            QueryRow(
+                query_id=req.query.query_id or f"adhoc-{uuid.uuid4().hex[:8]}",
+                name=req.query.name,
+                jurisdiction=req.query.jurisdiction,
+            )
+        ]
+    return await run_pipeline(queries=queries, limit=req.limit)
+
+
+@app.post("/api/pipeline/run-csv")
+async def pipeline_run_csv(file: UploadFile) -> FileResponse:
+    """Eligibility gate: upload the test CSV, get the result CSV back — no manual steps.
+
+    Delimiter (comma/semicolon) is auto-detected; the response is the finished
+    comma-delimited result CSV as a file download.
+    """
+    _require_pipeline_ready()
+    text = (await file.read()).decode("utf-8-sig")
+    queries = read_queries_text(text)
+    if not queries:
+        raise HTTPException(
+            status_code=400,
+            detail="No rows parsed — expected a CSV with columns query_id, name, jurisdiction",
+        )
+    summary = await run_pipeline(queries=queries)
+    output = Path(summary.output_csv)
+    return FileResponse(output, media_type="text/csv", filename=output.name)
 
 
 # Serve built frontend at / (after `npm run build` populates frontend/dist).
