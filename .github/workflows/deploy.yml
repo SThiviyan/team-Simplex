@@ -1,0 +1,238 @@
+name: Deploy to Cloud Run
+
+on:
+  # Manual trigger is the default — teams deploy when they're ready, not on
+  # every WIP push. To enable push-to-deploy, uncomment the `push:` block.
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
+
+# WIF requires id-token: write. We do NOT need contents: write.
+permissions:
+  contents: read
+  id-token: write
+
+# Latest push to a ref wins. A team iterating fast doesn't queue stale deploys.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT_ID:      sinpex-hackathon
+  PROJECT_NUMBER:  '930254293164'
+  REGION:          europe-west3
+  REGISTRY:        europe-west3-docker.pkg.dev/sinpex-hackathon/hackathon-images
+  DEPLOYER_SA:     hackathon-deployer@sinpex-hackathon.iam.gserviceaccount.com
+  RUNTIME_SA:      hackathon-runtime@sinpex-hackathon.iam.gserviceaccount.com
+  WIF_PROVIDER:    projects/930254293164/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+  VPC_CONNECTOR:   projects/sinpex-hackathon/locations/europe-west3/connectors/hack-connector
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---------------------------------------------------------------
+      # 1. Derive service name + image tag + deploy mode from the repo.
+      # ---------------------------------------------------------------
+      - name: Derive deploy variables
+        id: vars
+        run: |
+          set -euo pipefail
+
+          # Service name = repo name, lowercased, _ -> -, capped at 63 chars (Cloud Run rule).
+          SERVICE=$(echo "${{ github.event.repository.name }}" \
+            | tr '[:upper:]' '[:lower:]' \
+            | tr '_' '-' \
+            | cut -c1-63)
+
+          if [[ -f compose.cloud.yaml ]]; then
+            MODE=compose
+            COMPOSE_FILE=compose.cloud.yaml
+          elif [[ -f Dockerfile ]]; then
+            MODE=single
+            COMPOSE_FILE=
+          else
+            echo "::error::No Dockerfile or compose.cloud.yaml at repo root. See docs/02-deployment.md."
+            exit 1
+          fi
+
+          IMAGE="${REGISTRY}/${SERVICE}:${GITHUB_SHA::12}"
+          echo "service=${SERVICE}"           >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE}"               >> "$GITHUB_OUTPUT"
+          echo "mode=${MODE}"                 >> "$GITHUB_OUTPUT"
+          echo "compose_file=${COMPOSE_FILE}" >> "$GITHUB_OUTPUT"
+          echo "build_cache=${REGISTRY}/${SERVICE}:buildcache" >> "$GITHUB_OUTPUT"
+
+          echo "## Deploy plan"             >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Service**: \`${SERVICE}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Mode**: \`${MODE}\`"     >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Image**: \`${IMAGE}\`"   >> "$GITHUB_STEP_SUMMARY"
+
+      # ---------------------------------------------------------------
+      # 2. Parse secrets.yaml into a Cloud Run --set-secrets string.
+      # ---------------------------------------------------------------
+      - name: Parse secrets.yaml
+        id: secrets
+        run: |
+          set -euo pipefail
+          if [[ ! -f secrets.yaml ]]; then
+            echo "flags=" >> "$GITHUB_OUTPUT"
+            echo "No secrets.yaml — service will run without mounted secrets." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Build "ENV=secret:latest,ENV=secret:latest,..." with Python (no extra deps).
+          FLAGS=$(python3 - <<'PY'
+          import sys, re
+          import yaml  # PyYAML is preinstalled on ubuntu-latest runners
+          with open("secrets.yaml") as f:
+              data = yaml.safe_load(f) or {}
+          entries = data.get("secrets", [])
+          pairs = []
+          for e in entries:
+              env = (e.get("env") or "").strip()
+              sec = (e.get("secret") or "").strip()
+              if not env or not sec:
+                  continue
+              if not re.match(r"^[A-Z_][A-Z0-9_]*$", env):
+                  sys.exit(f"Invalid env name: {env!r}")
+              pairs.append(f"{env}={sec}:latest")
+          print(",".join(pairs))
+          PY
+          )
+          echo "flags=${FLAGS}" >> "$GITHUB_OUTPUT"
+          echo "- **Secrets mounted**: \`${FLAGS:-<none>}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # ---------------------------------------------------------------
+      # 3. Auth to GCP via Workload Identity Federation (no JSON keys).
+      # ---------------------------------------------------------------
+      - name: Auth to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker auth for Artifact Registry
+        run: gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
+
+      # ---------------------------------------------------------------
+      # 4. Build + push the ingress image (same root Dockerfile in both modes).
+      # ---------------------------------------------------------------
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --tag "${{ steps.vars.outputs.image }}" \
+            --cache-from "type=registry,ref=${{ steps.vars.outputs.build_cache }}" \
+            --cache-to   "type=registry,ref=${{ steps.vars.outputs.build_cache }},mode=max" \
+            --push \
+            .
+
+      # ---------------------------------------------------------------
+      # 5. Deploy to Cloud Run.
+      # ---------------------------------------------------------------
+      - name: Deploy (single-Dockerfile mode)
+        if: steps.vars.outputs.mode == 'single'
+        id: deploy_single
+        run: |
+          set -euo pipefail
+          SECRETS_FLAG=""
+          if [[ -n "${{ steps.secrets.outputs.flags }}" ]]; then
+            SECRETS_FLAG="--set-secrets=${{ steps.secrets.outputs.flags }}"
+          fi
+          gcloud run deploy "${{ steps.vars.outputs.service }}" \
+            --image="${{ steps.vars.outputs.image }}" \
+            --region="${REGION}" \
+            --platform=managed \
+            --allow-unauthenticated \
+            --service-account="${RUNTIME_SA}" \
+            --memory=1Gi \
+            --cpu=1 \
+            --min-instances=0 \
+            --max-instances=3 \
+            --port=8080 \
+            --timeout=60 \
+            ${SECRETS_FLAG}
+
+      - name: Deploy (compose mode — multi-container Cloud Run)
+        if: steps.vars.outputs.mode == 'compose'
+        run: |
+          set -euo pipefail
+
+          # Render Knative Service manifest from compose.cloud.yaml + secrets.yaml.
+          # PyYAML is preinstalled on ubuntu-latest runners.
+          python3 scripts/compose-to-knative.py \
+            --compose      "${{ steps.vars.outputs.compose_file }}" \
+            --secrets      secrets.yaml \
+            --service      "${{ steps.vars.outputs.service }}" \
+            --ingress-image "${{ steps.vars.outputs.image }}" \
+            --runtime-sa   "${RUNTIME_SA}" \
+            --min-instances 0 \
+            --max-instances 3 \
+            > /tmp/service.yaml
+
+          echo "::group::Generated Knative manifest"
+          cat /tmp/service.yaml
+          echo "::endgroup::"
+
+          # Apply the manifest. `replace` is the create-or-update primitive.
+          gcloud run services replace /tmp/service.yaml --region="${REGION}"
+
+          # Knative replace doesn't grant public invoke; do it explicitly.
+          gcloud run services add-iam-policy-binding "${{ steps.vars.outputs.service }}" \
+            --region="${REGION}" \
+            --member="allUsers" \
+            --role="roles/run.invoker" \
+            --quiet
+
+      # ---------------------------------------------------------------
+      # 6. Output the deployed URL.
+      # ---------------------------------------------------------------
+      - name: Capture and print URL
+        id: url
+        run: |
+          URL=$(gcloud run services describe "${{ steps.vars.outputs.service }}" \
+            --region="${REGION}" --format='value(status.url)')
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Live URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "${URL}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Test it:" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "curl ${URL}/api/health" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # ---------------------------------------------------------------
+      # 7. Friendly triage on failure — what likely broke + last good URL.
+      # ---------------------------------------------------------------
+      - name: Triage on failure
+        if: failure()
+        run: |
+          set +e
+          {
+            echo "## Deploy failed"
+            echo ""
+            echo "Common causes, ranked by likelihood:"
+            echo ""
+            echo "1. **Repo not under \`sinpexgmbh/team-*\`** → WIF auth fails."
+            echo "   Your repo: \`${{ github.repository }}\`. Must start with \`sinpexgmbh/team-\`."
+            echo "2. **\`Dockerfile\` doesn't listen on \$PORT (8080)** → revision fails health-check."
+            echo "3. **Missing secret value** → secret declared in \`secrets.yaml\` but \`gcloud secrets versions add\` was never run by the Sinpex hackathon team."
+            echo "4. **Build error** → see the Build step above."
+            echo ""
+            PREV_URL=$(gcloud run services describe "${{ steps.vars.outputs.service }}" \
+              --region="${REGION}" --format='value(status.url)' 2>/dev/null)
+            if [[ -n "${PREV_URL}" ]]; then
+              echo "Your previous successful URL is still live: ${PREV_URL}"
+            else
+              echo "No previous successful deploy — this is your first attempt."
+            fi
+            echo ""
+            echo "More: \`docs/faq.md\`. Stuck? Ping #hackathon-help with this run URL."
+          } >> "$GITHUB_STEP_SUMMARY"
