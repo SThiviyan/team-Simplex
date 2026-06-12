@@ -54,7 +54,7 @@ async def search_one_source(source: str, name: str, limit: int = 10) -> list[dic
 
     Args:
         source: Source id — one of: gleif, wikidata, handelsregister,
-            companies_house, brreg, annuaire, cvr, cro, sec, prh, nzbn, ajpes.
+            companies_house, brreg, annuaire, cvr, cro, sec, prh, nzbn, ajpes, ares.
         name: Company name to search for.
         limit: Max results.
     """
