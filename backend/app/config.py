@@ -76,6 +76,14 @@ class Settings(BaseSettings):
         description="Hard wall-clock cap (s) on the Layer-2 web-search fill. On timeout the "
         "row keeps what it has and missing fields stay blank — never a hang.",
     )
+    # Precision-over-recall guard: the semantic matcher must NOT emit a 'match'
+    # it rates below this. Below the floor it abstains (no_match -> blank) rather
+    # than risk a wrong confident answer. Raise toward 0.7 for stricter precision.
+    min_match_confidence: float = Field(
+        default=0.5,
+        description="Minimum semantic-match confidence to emit a match; below it the "
+        "matcher abstains (blank) instead of guessing.",
+    )
     # --- Persistent caching (testing / repeated lookups) --------------------
     search_cache_ttl_seconds: float = Field(
         default=7 * 24 * 3600.0,

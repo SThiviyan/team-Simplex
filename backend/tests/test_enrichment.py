@@ -9,6 +9,7 @@ from app.pipeline.confidence import (
     confidence_flag as _confidence_flag,
 )
 from app.pipeline.enrichment import (
+    _adopt_foundation_name,
     _echo_jurisdiction,
     _merge_from_records,
     matching_records,
@@ -52,6 +53,31 @@ def test_normalize_date_iso_and_local_formats():
     assert normalize_date("20/02/2019") == "2019-02-20"
     assert normalize_date("1947") == "1947"
     assert normalize_date(None) is None
+
+
+def test_adopt_foundation_name_upgrades_trading_name_to_legal_name():
+    """The registered name must be the official legal name, not a trading label:
+    'BMW' (Wikidata winner) -> 'Bayerische Motoren Werke AG' from the same-id
+    foundation record. id-equality proves same entity (the acronym can't be name-
+    matched by containment)."""
+    row = _row(registry_id="HRB 42243", name_normalized_register_name="BMW")
+    matched = [
+        _record(registry_id="HRB 42243", provider="wikidata",
+                name_normalized_register_name="BMW"),  # winner's source (trading label)
+        _record(registry_id="HRB 42243", provider="gleif",
+                name_normalized_register_name="Bayerische Motoren Werke Aktiengesellschaft"),
+    ]
+    out = _adopt_foundation_name(row, matched)
+    assert out.name_normalized_register_name == "Bayerische Motoren Werke Aktiengesellschaft"
+
+    # A DIFFERENT id must never have its name adopted (no cross-entity leak).
+    row2 = _row(registry_id="HRB 1", name_normalized_register_name="Acme")
+    other = [_record(registry_id="HRB 999", provider="gleif",
+                     name_normalized_register_name="Totally Different Corp")]
+    assert _adopt_foundation_name(row2, other).name_normalized_register_name == "Acme"
+    # No registry_id -> nothing to anchor on -> unchanged.
+    row3 = _row(name_normalized_register_name="BMW")
+    assert _adopt_foundation_name(row3, matched).name_normalized_register_name == "BMW"
 
 
 def test_jurisdiction_echo_uk_gb_interchangeable():

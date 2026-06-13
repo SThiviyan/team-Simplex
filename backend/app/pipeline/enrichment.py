@@ -332,6 +332,33 @@ def _adopt_foundation_registry_id(
     return result
 
 
+def _adopt_foundation_name(result: ExtractionResult, matched: list[dict]) -> ExtractionResult:
+    """The registered name must be the register's OFFICIAL legal name, not a
+    trading/short label (e.g. 'Bayerische Motoren Werke Aktiengesellschaft', not
+    'BMW'). The winner can come from a trading-name source (Wikidata's label is
+    'BMW') while a foundation record carries the full legal name under the SAME
+    registry_id. Adopt the fullest official name from a foundation record that
+    shares the id — id-equality is definitive same-entity proof, so this can
+    never swap in a different company's name (unlike loose name containment, which
+    can't even link the 'BMW' acronym to its long form)."""
+    if not result.registry_id:
+        return result
+    from app.search.source_ranking import is_foundation_source
+
+    best = result.name_normalized_register_name
+    for r in matched:
+        if not is_foundation_source(r.get("provider")):
+            continue
+        if not _ids_match(result.registry_id, r.get("registry_id")):
+            continue
+        cand = r.get("name_normalized_register_name")
+        if cand and (not best or len(cand) > len(best)):
+            best = cand
+    if best and best != result.name_normalized_register_name:
+        return result.model_copy(update={"name_normalized_register_name": best})
+    return result
+
+
 async def _gleif_name_backfill(
     result: ExtractionResult, query: QueryRow, run_id: str
 ) -> ExtractionResult:
@@ -749,6 +776,7 @@ async def enrich_result(
         # entity (e.g. GLEIF's registeredAs). It's grounded (came from a tool
         # result) and the hierarchy already vetted that the names agree.
         result = _adopt_foundation_registry_id(result, matched)
+        result = _adopt_foundation_name(result, matched)
         result, contradictions = _merge_from_records(result, matched)
         details: dict = {}
         try:

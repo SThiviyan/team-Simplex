@@ -293,6 +293,19 @@ def _assemble_result(
                 f"decision='match' but winning_candidate_index={idx!r} is out of "
                 f"range for {len(fuzz_candidates)} candidates."
             )
+        # Confidence floor: if the verifier itself is not confident (its own
+        # rating is below the floor — the prompt's "plausible but ambiguous"
+        # band), do NOT emit the match. Abstaining is correct: a wrong confident
+        # answer scores worse than a blank. Uses the LLM's own uncertainty signal.
+        from app.config import settings
+
+        if confidence < settings.min_match_confidence:
+            result["decision"] = DECISION_NO_MATCH
+            result["reasoning"] = (
+                f"Match confidence {confidence} below floor "
+                f"{settings.min_match_confidence}; abstained. {reasoning}"
+            )
+            return result
         # Return the record in the same shape as the input, with confidence updated.
         winning = dict(fuzz_candidates[idx])
         winning[CONFIDENCE_FIELD] = confidence

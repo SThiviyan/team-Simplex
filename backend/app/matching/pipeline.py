@@ -23,7 +23,6 @@ from app.matching.company_matcher import (
     find_candidates,
 )
 from app.matching.semantic_filter import (
-    DECISION_MATCH,
     DEFAULT_MODEL,
     SemanticFilterError,
     semantic_filter,
@@ -116,27 +115,20 @@ def run_matching(
             force_llm_on_empty=is_abbreviation,
         )
     except SemanticFilterError as exc:
-        # The chain must always produce a usable answer for the frontend. If the
-        # LLM layer fails (no key, timeout, rate-limit, …), fall back to the top
-        # RapidFuzz candidate rather than returning nothing.
-        logger.warning("semantic_filter failed (%s); falling back to top fuzzy candidate", exc)
-        if candidates:
-            top = dict(candidates[0])
-            result = {
-                "decision": DECISION_MATCH,
-                "winning_candidate": top,
-                "confidence": float(top.get("confidence") or 0.0),
-                "reasoning": f"Semantic filter unavailable ({exc}); used top RapidFuzz candidate.",
-                "recursive_search": None,
-            }
-        else:
-            result = {
-                "decision": "no_match",
-                "winning_candidate": None,
-                "confidence": 0.0,
-                "reasoning": f"Semantic filter unavailable ({exc}); no fuzzy candidates.",
-                "recursive_search": None,
-            }
+        # The semantic verifier is what CONFIRMS a fuzzy candidate is the right
+        # entity. If it fails (no key, timeout, rate-limit, …) we cannot be sure —
+        # so we abstain (no_match / blank) rather than emit an UNVERIFIED RapidFuzz
+        # name match. Precision over recall: a wrong confident answer scores worse
+        # than a blank one. The agent's own grounded answer (if any) still stands;
+        # this only governs the matcher's verdict.
+        logger.warning("semantic_filter failed (%s); abstaining (no_match)", exc)
+        result = {
+            "decision": "no_match",
+            "winning_candidate": None,
+            "confidence": 0.0,
+            "reasoning": f"Semantic filter unavailable ({exc}); abstained rather than guess.",
+            "recursive_search": None,
+        }
 
     # Expose the shortlist that fed the decision (useful for the UI / debugging),
     # plus how the query was read — callers log recursion causes from this.
