@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { SearchBar } from './components/SearchBar';
 import { FlowGraph } from './components/FlowGraph';
 import { Phase, PipelineData, PipelinePanel } from './components/PipelinePanel';
-import { csvSearch, QueryRow, Winner } from './api';
+import { csvSearch, Owner, QueryRow, Winner } from './api';
 
 type State =
   | { kind: 'idle' }
@@ -272,6 +272,8 @@ function WinnerCard({
         <Field label="Source" value={c.provider} />
       </dl>
 
+      {winner.owner?.owner_name ? <OwnerBlock owner={winner.owner} /> : null}
+
       {c.source ? (
         <a
           href={c.source}
@@ -289,6 +291,35 @@ function WinnerCard({
         </p>
       ) : null}
     </li>
+  );
+}
+
+function OwnerBlock({ owner }: { owner: Owner }) {
+  const pct = Math.round((owner.confidence ?? 0) * 100);
+  const sub = [owner.owner_type?.replace(/_/g, ' '), owner.ownership_basis]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <div className="rounded-lg border border-line bg-paper px-3 py-2.5 space-y-1">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">Owner</p>
+        <span className="font-mono text-[10px] tabular-nums text-muted" title="owner confidence">
+          {pct}%
+        </span>
+      </div>
+      <p className="text-[14px] font-medium text-ink">{owner.owner_name}</p>
+      {sub ? <p className="text-[12px] text-muted text-balance">{sub}</p> : null}
+      {owner.source && /^https?:\/\//.test(owner.source) ? (
+        <a
+          href={owner.source}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-block font-mono text-[11px] text-accent hover:text-ink transition-colors break-all"
+        >
+          {owner.source}
+        </a>
+      ) : null}
+    </div>
   );
 }
 

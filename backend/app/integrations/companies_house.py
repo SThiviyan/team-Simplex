@@ -14,6 +14,8 @@ CompaniesHouseSearchProvider so the request/normalisation logic lives in one pla
 
 import httpx
 
+from app.search.registry_format import infer_jurisdiction
+
 API_BASE = "https://api.company-information.service.gov.uk"
 # Public, human-readable company page (not the API host).
 RECORD_WEB = "https://find-and-update.company-information.service.gov.uk/company"
@@ -43,6 +45,11 @@ def _org_type(code: str | None) -> str | None:
 def _normalise(item: dict) -> dict:
     """Flatten one Companies House search item into a compact dict."""
     number = item.get("company_number")
+    # Overseas companies / registered-overseas-entities carry their real country
+    # in the structured address (e.g. "Germany") — the entry's own statement of
+    # where it is, which must win over the UK register it was found in. A normal
+    # UK company has no country (or "United Kingdom") here -> GB.
+    addr_country = (item.get("address") or {}).get("country")
     return {
         "company_number": number,
         "name": item.get("title"),
@@ -50,8 +57,8 @@ def _normalise(item: dict) -> dict:
         "address": item.get("address_snippet"),
         "date_of_creation": item.get("date_of_creation"),
         "organization_type": _org_type(item.get("company_type")),
-        # UK register; ISO 3166-1 alpha-2 so the jurisdiction filter matches "GB".
-        "jurisdiction": "GB",
+        # ISO 3166-1 alpha-2 so the jurisdiction filter matches.
+        "jurisdiction": infer_jurisdiction(addr_country) or "GB",
         "record_url": f"{RECORD_WEB}/{number}" if number else None,
     }
 

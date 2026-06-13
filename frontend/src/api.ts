@@ -35,6 +35,15 @@ export type QueryRow = {
   sources_skipped?: string[];
 };
 
+// Who owns/controls a matched company — web-searched after the match is made.
+export type Owner = {
+  owner_name: string | null;
+  owner_type: string | null;
+  ownership_basis: string | null;
+  confidence: number;
+  source: string | null;
+};
+
 // One winning result produced by the matching layer (RapidFuzz + LLM filter).
 export type Winner = {
   query_id: string;
@@ -46,6 +55,8 @@ export type Winner = {
   reasoning: string;
   recursive_search: { suggested_query: string } | null;
   candidates: CompanyRecord[];
+  // The owner, when found (decision === 'match' and a web result was returned).
+  owner?: Owner | null;
 };
 
 export type CsvSearchResponse = {

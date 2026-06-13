@@ -1,17 +1,87 @@
-"""Scraper client for the official German Handelsregister (handelsregister.de).
+"""Client for the German Handelsregister, with a fallback.
 
-No JSON API exists, so we drive the JSF portal like a browser (mechanize):
-open the start page for a session, trigger the "advanced search" navigation,
-submit the keyword form, parse the results grid. Synchronous and slow — call
-it off the event loop (asyncio.to_thread). Shared by the MCP server and the
-HandelsregisterSearchProvider.
+Primary path: the handelsregister.ai JSON API (fast, structured), keyed with an
+`x-api-key` header. Fallback path: scrape the official handelsregister.de JSF
+portal like a browser (mechanize + BeautifulSoup) when no API key is configured
+or the API call fails. Both paths return the same normalised row shape.
+
+Docs: https://handelsregister.ai/en/documentation
+
+Shared by the company-registry MCP server (via the provider) and the
+HandelsregisterSearchProvider so request/normalisation logic lives in one place.
 """
 
+import asyncio
+import logging
 import re
 
 import certifi
+import httpx
 import mechanize
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
+
+# --- handelsregister.ai API (primary) --------------------------------------
+
+API_BASE = "https://handelsregister.ai/api/v1"
+
+
+def _registry_id(reg: dict) -> str | None:
+    """Combine the register section + number, e.g. "HRB" + "42243" -> "HRB 42243"."""
+    rtype, rnum = reg.get("register_type"), reg.get("register_number")
+    if rtype and rnum:
+        return f"{rtype} {rnum}"
+    return rnum or None
+
+
+def _court(court: str | None) -> str | None:
+    """The register's court — prefix the local-court form when given a bare city
+    ("München" -> "Amtsgericht München")."""
+    if not court:
+        return None
+    return court if court.lower().startswith("amtsgericht") else f"Amtsgericht {court}"
+
+
+def _api_address(a: dict) -> str | None:
+    line = " ".join(p for p in (a.get("street"), a.get("house_number")) if p)
+    parts = [
+        line or None,
+        " ".join(p for p in (a.get("postal_code"), a.get("city")) if p) or None,
+        a.get("state"),
+    ]
+    return ", ".join(p for p in parts if p) or None
+
+
+def _normalise_api(r: dict) -> dict:
+    reg = r.get("registration") or {}
+    addr = r.get("address") or {}
+    return {
+        "number": _registry_id(reg),
+        "name": r.get("name"),
+        "legal_form": None,  # not in the search result; the registered name carries it
+        "city": addr.get("city"),
+        "address": _api_address(addr),
+        "status": None,  # not in the search result
+        "incorporation_date": r.get("registration_date"),
+        "country": "DE",
+        "court": _court(reg.get("court")),
+        "url": None,
+    }
+
+
+async def _api_search(name: str, api_key: str, limit: int = 10) -> list[dict]:
+    """Search via the handelsregister.ai API. Raises on any HTTP/transport error."""
+    headers = {"x-api-key": api_key, "Accept": "application/json"}
+    params = {"q": name, "page": 1}
+    async with httpx.AsyncClient(base_url=API_BASE, headers=headers, timeout=30.0) as client:
+        resp = await client.get("/search-organizations", params=params)
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
+        return [_normalise_api(r) for r in results[:limit]]
+
+
+# --- handelsregister.de portal scraper (fallback) --------------------------
 
 START_URL = "https://www.handelsregister.de"
 _UA = (
@@ -38,14 +108,19 @@ def _browser() -> mechanize.Browser:
     return b
 
 
-def search_companies(name: str, limit: int = 10) -> list[dict]:
-    """Keyword search of the German commercial register. Returns row dicts."""
+def _scrape_search(name: str, limit: int = 10) -> list[dict]:
+    """Keyword search of the German commercial register by scraping the portal.
+
+    Synchronous and slow — call off the event loop (asyncio.to_thread).
+    """
     b = _browser()
     b.open(START_URL, timeout=25)
 
     # Trigger the JSF "advanced search" command link by injecting its params.
     b.select_form(name="naviForm")
-    b.form.new_control("hidden", "naviForm:erweiterteSucheLink", {"value": "naviForm:erweiterteSucheLink"})
+    b.form.new_control(
+        "hidden", "naviForm:erweiterteSucheLink", {"value": "naviForm:erweiterteSucheLink"}
+    )
     b.form.new_control("hidden", "target", {"value": "erweiterteSucheLink"})
     b.submit()
 
@@ -66,19 +141,43 @@ def search_companies(name: str, limit: int = 10) -> list[dict]:
         cells = [c.get_text(" ", strip=True) for c in row.find_all("td")]
         if len(cells) < 3:
             continue
-        location = cells[1]  # "Bundesland District court City <reg-no>"
+        location = cells[1]  # "Bundesland District-court City <reg-no>"
         m = _REG_RE.search(location)
-        # The court is the location minus the register number (kept separately).
         court = re.sub(r"\s+", " ", _REG_RE.sub("", location)).strip()
         results.append(
             {
+                "number": m.group(0) if m else None,
                 "name": cells[2],
-                "court": court,
-                "register_number": m.group(0) if m else None,
+                "legal_form": None,
+                "city": None,
+                "address": None,
                 "status": cells[4] if len(cells) > 4 else None,
-                "jurisdiction": "DE",
+                "incorporation_date": None,
+                "country": "DE",
+                "court": court or None,
+                "url": None,
             }
         )
         if len(results) >= limit:
             break
     return results
+
+
+# --- public entry point: API first, scrape on failure / no key -------------
+
+
+async def search_companies(
+    name: str, api_key: str | None = None, limit: int = 10
+) -> list[dict]:
+    """Search the German register. Use the handelsregister.ai API when a key is
+    configured; fall back to scraping handelsregister.de when there is no key or
+    the API call is not working (auth/HTTP/transport error)."""
+    if api_key:
+        try:
+            return await _api_search(name, api_key, limit)
+        except Exception as exc:
+            logger.warning(
+                "handelsregister.ai API not working (%s); falling back to the website scraper",
+                exc,
+            )
+    return await asyncio.to_thread(_scrape_search, name, limit)

@@ -204,7 +204,13 @@ async def csv_search(providers: list[SearchProvider], csv_text: str, limit: int 
         "results": records,
     }
     try:
-        OUTPUT_FILE.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+        # The on-disk export omits each record's `confidence` (a cheap name
+        # string-similarity). It stays on the in-memory records so the matching
+        # layer can still use it as a prior, but it is not written to the file.
+        file_results = [{k: v for k, v in rec.items() if k != "confidence"} for rec in records]
+        OUTPUT_FILE.write_text(
+            json.dumps({**payload, "results": file_results}, indent=2, ensure_ascii=False)
+        )
         payload["output_file"] = str(OUTPUT_FILE)
     except OSError as e:  # never fail the request just because the file write did
         payload["output_file_error"] = str(e)

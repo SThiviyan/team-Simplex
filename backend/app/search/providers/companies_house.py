@@ -62,7 +62,9 @@ class CompaniesHouseSearchProvider(SearchProvider):
                     snippet=_snippet(r),
                     score=_score(query, r.get("name"), i),
                     source=self.name,
-                    jurisdiction="GB",  # UK register by definition
+                    # The entry's own country (overseas companies say where they
+                    # are registered); defaults to GB for normal UK companies.
+                    jurisdiction=r.get("jurisdiction") or "GB",
                     registry_id=num,
                     register_name=r.get("name"),
                     address=r.get("address"),

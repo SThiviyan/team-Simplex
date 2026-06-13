@@ -57,7 +57,9 @@ def _normalise(subject: dict, legal_forms: dict[str, str]) -> dict:
         # datumZaniku set => the subject has ceased to exist.
         "status": "zaniklý" if subject.get("datumZaniku") else "aktivní",
         "incorporation_date": subject.get("datumVzniku"),
-        "country": "CZ",
+        # The registered-office country code (ISO alpha-2) the entry itself states,
+        # rather than assuming CZ from the server; ~always "CZ" in practice.
+        "country": sidlo.get("kodStatu") or "CZ",
         "court": None,
         "url": f"{WEB}?ico={ico}" if ico else None,
     }
