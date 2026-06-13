@@ -80,6 +80,21 @@ def test_adopt_foundation_name_upgrades_trading_name_to_legal_name():
     assert _adopt_foundation_name(row3, matched).name_normalized_register_name == "BMW"
 
 
+def test_organization_type_rejects_stock_ticker():
+    from app.pipeline.enrichment import _clean_organization_type
+
+    # Tickers must be dropped — organization_type is a legal form, not a ticker.
+    assert _clean_organization_type("XOM") is None      # Exxon Mobil ticker
+    assert _clean_organization_type("AAPL") is None
+    assert _clean_organization_type("BRK.A") is None
+    # Real legal forms pass through.
+    for ok in ("GmbH", "AG", "SE", "UG", "Ltd", "PLC", "LLC",
+               "New York Business Corporation", "Aktiengesellschaft",
+               "Société Anonyme", "B.V."):
+        assert _clean_organization_type(ok) == ok
+    assert _clean_organization_type(None) is None
+
+
 def test_jurisdiction_echo_uk_gb_interchangeable():
     q_uk = QueryRow(query_id="q", name="Tesco", jurisdiction="UK")
     q_gb = QueryRow(query_id="q", name="Tesco", jurisdiction="GB")

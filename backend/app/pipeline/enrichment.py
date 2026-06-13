@@ -449,6 +449,35 @@ _ALL_DATA_FIELDS = (
 )
 
 
+# Bare abbreviations that genuinely ARE legal forms (so they're NOT mistaken for
+# a stock ticker by the guard below). Multi-word / mixed-case forms ('GmbH',
+# 'New York Business Corporation') never reach the guard.
+_LEGAL_FORM_ABBREVS = frozenset({
+    "AG", "SE", "UG", "EK", "KG", "OHG", "GBR", "EG", "EV", "GMBH", "KGAA", "MBH",
+    "LTD", "PLC", "LLC", "LLP", "INC", "CORP", "CO", "LP",
+    "SA", "SAS", "SARL", "SL", "SLU", "SCS", "SNC", "SCA", "SPA", "SRL", "SRO", "SP",
+    "BV", "NV", "CV", "VOF", "AB", "ASA", "AS", "OY", "OYJ", "HF", "EHF", "APS",
+    "KS", "ANS", "DA", "DOO", "OOD", "AD", "EOOD", "ZRT", "KFT", "BT", "UAB", "SIA",
+    "OU", "AAS", "PJSC", "OJSC", "JSC", "PT", "TBK",
+})
+# A bare ticker-shaped token: 1-5 uppercase letters/digits, optional one dot.
+_TICKER_SHAPE = re.compile(r"^[A-Z][A-Z0-9]{0,4}(\.[A-Z])?$")
+
+
+def _clean_organization_type(value: str | None) -> str | None:
+    """organization_type must be a LEGAL FORM (GmbH, Ltd, Corporation, AG…), not
+    a stock ticker. Web/Wikidata enrichment sometimes drops a ticker here (e.g.
+    'XOM' for Exxon Mobil). Drop a bare ticker-shaped token unless it is a known
+    legal-form abbreviation; real legal descriptions (multi-word or mixed-case)
+    always pass through."""
+    if not value:
+        return value
+    v = value.strip()
+    if _TICKER_SHAPE.match(v) and v.upper() not in _LEGAL_FORM_ABBREVS:
+        return None
+    return value
+
+
 def _scrub(result: ExtractionResult) -> ExtractionResult:
     """Final safety net before output. Three guarantees:
 
@@ -469,6 +498,11 @@ def _scrub(result: ExtractionResult) -> ExtractionResult:
         if isinstance(value, str) and (not value.strip() or _JUNK_VALUE.match(value.strip())):
             updates[field] = None
     scrubbed = result.model_copy(update=updates) if updates else result
+
+    # organization_type must be a legal form, never a stock ticker.
+    cleaned_org = _clean_organization_type(getattr(scrubbed, "organization_type", None))
+    if cleaned_org != scrubbed.organization_type:
+        scrubbed = scrubbed.model_copy(update={"organization_type": cleaned_org})
 
     ambiguous = scrubbed.confidence_flag == FLAG_AMBIGUOUS or (
         scrubbed.no_match_reason or ""
@@ -669,7 +703,7 @@ Rules:
   place), return null for that field.
 - registered_address: the registered/legal address, as 'street, postcode, city, country'.
 - incorporation_date: the REGISTRATION/incorporation date with the register, NOT the founding/establishment year. ISO YYYY-MM-DD (YYYY alone if only the year is verifiable).
-- organization_type: the legal form as registered (GmbH, Ltd, B.V., S.à r.l., ...).
+- organization_type: the legal form as registered (GmbH, AG, Ltd, B.V., Corporation, S.à r.l., ...). This is the LEGAL FORM only — never a stock ticker (not 'XOM', 'AAPL') and never the brand/name.
 - status: one of active / dissolved / in_liquidation / dormant, else null.
 - vat_number: the VAT / USt-IdNr / TVA number exactly as printed (e.g. 'DE266929333').
 - trade_names: trading/brand names distinct from the legal name, 'name; name'.
