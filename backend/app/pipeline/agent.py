@@ -36,9 +36,33 @@ MAX_TOOL_ROUNDS = 5
 LAYER1_ERROR_PREFIX = "layer1_error"
 UNGROUNDED_REASON = "ungrounded_registry_id"
 
+# Fields the Layer-1 identity agent does NOT emit — they are filled downstream
+# by the enrichment layer from the gathered register records / web-fill, not
+# decided by the identity LLM. Pruning them from the structured-output schema
+# keeps it under Anthropic's hard limit of 16 union-typed (nullable/anyOf)
+# parameters: ExtractionPayload has 17 nullable fields, which 400s the API
+# ("too many parameters with union types"). Parsing still uses the full
+# ExtractionPayload, so any pruned field simply defaults to None here.
+_LAYER1_OMIT_FIELDS = (
+    "vat_number", "trade_names", "industry_code", "industry",
+    "capitalization", "business_purpose",
+)
+
+
+def _layer1_output_schema() -> dict:
+    schema = ExtractionPayload.model_json_schema()
+    for omit in _LAYER1_OMIT_FIELDS:
+        schema.get("properties", {}).pop(omit, None)
+    if isinstance(schema.get("required"), list):
+        schema["required"] = [
+            name for name in schema["required"] if name not in _LAYER1_OMIT_FIELDS
+        ]
+    return schema
+
+
 _OUTPUT_FORMAT = {
     "type": "json_schema",
-    "schema": ExtractionPayload.model_json_schema(),
+    "schema": _layer1_output_schema(),
 }
 
 # Prompt cache (5-min TTL): the system prompt + tool schemas are identical for
