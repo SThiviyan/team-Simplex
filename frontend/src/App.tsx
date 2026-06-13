@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { describe, EventFeed, useLiveRun } from './components/liveFeed';
+import { ConfidenceSignals, FlowGraph } from './components/FlowGraph';
 import { PipelinePanel } from './components/PipelinePanel';
 import { SearchBar } from './components/SearchBar';
-import { ExtractionResult, resolveCompany } from './api';
+import { ExtractionResult, parseQuery, PipelineEvent, resolveCompany } from './api';
 
 type State =
   | { kind: 'idle' }
@@ -12,6 +13,10 @@ type State =
 
 export default function App() {
   const [state, setState] = useState<State>({ kind: 'idle' });
+  const busy = state.kind === 'loading';
+  // Live event stream of the current/last run — kept around after completion so
+  // the flow graph + confidence trajectory stay visible on the result.
+  const events = useLiveRun(busy);
 
   async function runSearch(q: string) {
     setState({ kind: 'loading', query: q });
@@ -27,20 +32,21 @@ export default function App() {
     }
   }
 
-  const busy = state.kind === 'loading';
-
   return (
     <Shell>
       <Header />
       <SearchBar onSubmit={runSearch} busy={busy} />
-      <Results state={state} onRetry={() => state.kind === 'error' && runSearch(state.query)} />
+      <Results
+        state={state}
+        events={events}
+        onRetry={() => state.kind === 'error' && runSearch(state.query)}
+      />
       <PipelinePanel />
     </Shell>
   );
 }
 
-function SearchProgress({ query }: { query: string }) {
-  const events = useLiveRun(true);
+function SearchProgress({ query, events }: { query: string; events: PipelineEvent[] }) {
   const last = events.length ? events[events.length - 1] : null;
   return (
     <section aria-label="Resolving" className="space-y-3 animate-fade-in-up">
@@ -51,10 +57,11 @@ function SearchProgress({ query }: { query: string }) {
           enriching…
         </span>
       </div>
+      <FlowGraph events={events} />
       {last ? (
         <p className="font-mono text-[11px] text-muted truncate">{describe(last)}</p>
       ) : null}
-      <EventFeed events={events} label="Resolution progress" max="max-h-60" />
+      <EventFeed events={events} label="Resolution progress" max="max-h-52" />
     </section>
   );
 }
@@ -99,15 +106,26 @@ const FLAG_STYLE: Record<string, string> = {
   error: 'bg-red-500/10 text-red-700',
 };
 
-function Results({ state, onRetry }: { state: State; onRetry: () => void }) {
+function Results({
+  state,
+  events,
+  onRetry,
+}: {
+  state: State;
+  events: PipelineEvent[];
+  onRetry: () => void;
+}) {
   if (state.kind === 'idle') return <IdleState />;
-  if (state.kind === 'loading') return <SearchProgress query={state.query} />;
+  if (state.kind === 'loading') return <SearchProgress query={state.query} events={events} />;
   if (state.kind === 'error') return <ErrorState message={state.message} onRetry={onRetry} />;
 
   // The full pipeline (registry foundation hierarchy + Tier A/B enrichment)
-  // resolves one company and returns every CSV column — shown below.
+  // resolves one company and returns every CSV column. The flow graph shows the
+  // path + confidence trajectory; the card shows the row + the signals behind
+  // the calibrated score.
   return (
-    <section aria-label="Search complete" className="space-y-5 animate-fade-in-up">
+    <section aria-label="Search complete" className="space-y-4 animate-fade-in-up">
+      <FlowGraph events={events} />
       <ResultCard query={state.query} r={state.result} />
     </section>
   );
@@ -161,6 +179,9 @@ function ResultCard({ query, r }: { query: string; r: ExtractionResult }) {
         <Field label="Registered address" value={r.registered_address} span />
         <Field label="Officers" value={r.officers} span />
       </dl>
+
+      {/* Why the confidence is what it is — the signals behind the score. */}
+      <ConfidenceSignals result={r} queryJurisdiction={parseQuery(query).jurisdiction} />
 
       <div className="flex items-center justify-between gap-3 border-t border-line pt-2">
         <span className="text-[10px] uppercase tracking-wide text-muted">Source</span>

@@ -494,7 +494,7 @@ async def _mcp_attempt(
         for round_idx in range(MAX_TOOL_ROUNDS):
             kwargs: dict = dict(
                 model=settings.anthropic_model,
-                max_tokens=16000,
+                max_tokens=4000,
                 system=_system_blocks(),
                 messages=messages,
                 tools=tools,
@@ -561,7 +561,7 @@ async def _web_search_attempt(
     for _ in range(MAX_PAUSE_TURN_CONTINUATIONS):
         response = await client.messages.create(
             model=settings.anthropic_model,
-            max_tokens=16000,
+            max_tokens=4000,
             system=_system_blocks(),
             messages=messages,
             tools=[{"type": "web_search_20260209", "name": "web_search"}],
