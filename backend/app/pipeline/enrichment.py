@@ -208,6 +208,49 @@ def _missing_fields(result: ExtractionResult) -> list[str]:
     return [f for f in ENRICHABLE_FIELDS if not getattr(result, f)]
 
 
+# Strings that are JSON fragments / null markers, not real values. A web-search
+# payload occasionally leaks one of these into a field; they must never reach
+# the CSV. Matches ": null,", ":null", "null", "none", "n/a", "{...}" fragments.
+_JUNK_VALUE = re.compile(r"^[\s:,{}\[\]\"']*(null|none|n/?a)[\s:,{}\[\]\"']*$", re.IGNORECASE)
+_ALL_DATA_FIELDS = (
+    "registry_court",
+    "registered_address",
+    "incorporation_date",
+    "organization_type",
+    "status",
+    "officers",
+)
+
+
+def _scrub(result: ExtractionResult) -> ExtractionResult:
+    """Final safety net before output. Two guarantees:
+
+    1. No junk values: any field whose value is a JSON fragment / null-marker
+       (e.g. the literal ': null,') becomes None.
+    2. Output contract: a TRUE no-match — no registry_id AND no identified name
+       — carries NO Tier A/B data; the row is blank except its no_match_reason.
+       (A row we identified by name but couldn't get a number for keeps its
+       enrichment; only the number is missing.)
+    """
+    updates: dict = {}
+    str_fields = ("registry_id", "name_normalized_register_name", "source", *_ALL_DATA_FIELDS)
+    for field in str_fields:
+        value = getattr(result, field)
+        if isinstance(value, str) and (not value.strip() or _JUNK_VALUE.match(value.strip())):
+            updates[field] = None
+    scrubbed = result.model_copy(update=updates) if updates else result
+
+    if not scrubbed.registry_id and not scrubbed.name_normalized_register_name:
+        # Nothing was identified -> the row asserts nothing about any company.
+        blank = {f: None for f in _ALL_DATA_FIELDS}
+        # Drop a non-URL "source" that only made sense alongside an id; a real
+        # citing URL may stay (it can document what was searched).
+        if scrubbed.source and not scrubbed.source.startswith(("http://", "https://")):
+            blank["source"] = None
+        scrubbed = scrubbed.model_copy(update=blank)
+    return scrubbed
+
+
 async def _cross_reference(
     result: ExtractionResult, matched: list[dict]
 ) -> tuple[ExtractionResult, dict]:
@@ -549,6 +592,8 @@ async def enrich_result(
             "jurisdiction_confirmed": _echo_jurisdiction(result, query),
         }
     )
+    # Scrub junk + enforce the no-id-means-no-data contract on the final row.
+    result = _scrub(result)
     await event_log.log_event(
         run_id, "enrichment_done", query.query_id,
         flag=flag, confidence=result.confidence,

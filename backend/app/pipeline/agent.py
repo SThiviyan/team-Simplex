@@ -87,20 +87,29 @@ Sub-jurisdictional structure:
 - USA: companies register per state (Secretary of State); there is no federal registry.
 - Canada: federal plus provincial registries; UAE: emirate-level registries.
 
-Corporate groups — picking the right entity for a bare brand query:
-- A query like 'Ryanair' or 'Maersk' that matches SEVERAL entities of the same group
-  (holding/parent plc, operating subsidiaries like 'X DAC' / 'X A/S', country units)
-  refers to the group's PRIMARY registered entity in the queried jurisdiction — usually
-  the top holding / listed company (e.g. 'Ryanair Holdings plc', 'A.P. Møller - Mærsk A/S'),
-  NOT an operating subsidiary, even when the subsidiary's name is the closer string match.
-- Pick a subsidiary only when the query names it (legal form, qualifier) or only one
-  entity exists. If the evidence cannot tell which group entity is meant, use
-  no_match_reason 'ambiguous_candidates' instead of guessing.
+When to answer vs abstain:
+- A single clear registry hit whose name matches the query (ignoring legal-suffix
+  differences) IS the answer — return it. Do NOT abstain just because the company is
+  small or obscure; a real registered entity that nothing else can be confused with
+  should be returned.
+- Corporate groups (ONLY when SEVERAL entities of one group match a bare brand, e.g.
+  'Ryanair' -> holding plc vs operating 'Ryanair DAC'): prefer the group's PRIMARY
+  registered entity — the top holding / listed company (e.g. 'Ryanair Holdings plc') —
+  not an operating subsidiary, even if the subsidiary is the closer string match. This
+  is a tie-breaker among group entities, not a reason to abstain on a lone clear hit.
+- Differently-named siblings ('X Trust Ltd' vs 'X Services Ltd', 'X Holding' vs
+  'X Operating') are DIFFERENT entities — never return one whose core name differs from
+  the query by a meaning-bearing word the query did not contain. Prefer abstaining.
+- Use 'ambiguous_candidates' only when TWO OR MORE genuinely distinct entities fit
+  equally and nothing disambiguates them.
 
 Sole proprietors / freelancers: in many places (UK sole traders, Irish sole traders,
-Spanish autónomos, US sole proprietors) the correct answer is NO registry entry — return
-null fields with no_match_reason 'not_in_registry'. Others DO register them (Poland
-CEIDG, France SIREN, Czech Živnostenský rejstřík, Belgium KBO/BCE).
+Spanish autónomos, US sole proprietors) the correct answer is genuinely NO registry
+entry — return null fields with no_match_reason 'not_in_registry'. Reserve
+'not_in_registry' for THAT (the entity type isn't registered anywhere). If you simply
+could not find a company that probably does exist, use 'no_match_in_sources' instead —
+do not claim it isn't registered. Others DO register sole traders (Poland CEIDG, France
+SIREN, Czech Živnostenský rejstřík, Belgium KBO/BCE).
 
 Output rules:
 - registry_id: the official NATIONAL registration number EXACTLY as a tool result
@@ -127,8 +136,9 @@ Output rules:
   above 0.8 when registry_id and the registered name both clearly match the query.
 - source: at least one citable URL or registry document reference from the tool results.
 - If there is no confident match, set the data fields to null and no_match_reason to:
-  'not_in_registry', 'ambiguous_candidates', 'out_of_scope', or another short
-  snake_case label.
+  'not_in_registry' (entity type genuinely isn't registered), 'no_match_in_sources'
+  (probably exists but you couldn't find it), 'ambiguous_candidates', 'out_of_scope',
+  or another short snake_case label.
 - reasoning: one or two sentences on why this confidence.
 - After your final tool call, respond with the JSON object only."""
 
@@ -197,9 +207,20 @@ def _mock_payload(query: QueryRow) -> ExtractionPayload:
     )
 
 
-def _extract_payload(response) -> ExtractionPayload:
-    text = next(b.text for b in reversed(response.content) if b.type == "text")
-    return ExtractionPayload.model_validate_json(text)
+def _extract_payload(response) -> ExtractionPayload | None:
+    """Parse the structured ExtractionPayload out of the response.
+
+    Web-search turns interleave reasoning text, citations and the final JSON
+    across several text blocks. Validate each block (newest first) and return
+    the first that IS the schema; never blindly take the last block, which may
+    be a citation fragment that would otherwise leak garbage into a field."""
+    texts = [b.text for b in reversed(response.content) if b.type == "text" and b.text]
+    for text in texts:
+        try:
+            return ExtractionPayload.model_validate_json(text)
+        except ValueError:
+            continue
+    return None
 
 
 def _match_record(query_id: str, r: dict) -> dict | None:

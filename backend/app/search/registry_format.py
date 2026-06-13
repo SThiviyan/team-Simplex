@@ -165,9 +165,20 @@ def normalize_registry_id(jurisdiction: str | None, registry_id: str | None) -> 
 
 # --- registry_court, per jurisdiction ---------------------------------------
 
-# Some sources report the German court in English ("Local Court Munich"); the
-# national standard is "Amtsgericht <City>".
-_DE_LOCAL_COURT = re.compile(r"^local court\s+(.+)$", re.IGNORECASE)
+# German courts arrive in several non-standard shapes; the national standard
+# is "Amtsgericht <City>":
+#   - "Local Court Munich"                      (English aggregator label)
+#   - "Bavaria District court München"          (handelsregister.de scrape:
+#                                                 "<Bundesland> District court <City>")
+#   - "District court München"                  (no Bundesland prefix)
+# The Bundesland prefix (one or two capitalised words, optionally hyphenated) is
+# dropped; only the city is kept.
+_DE_COURT = re.compile(
+    r"^(?:[A-ZÄÖÜ][\w.-]+(?:[ -][A-ZÄÖÜ][\w.-]+)?\s+)?"  # optional Bundesland
+    r"(?:local|district)\s+court\s+"                       # court-type label
+    r"(?P<city>.+)$",
+    re.IGNORECASE,
+)
 
 
 def normalize_registry_court(jurisdiction: str | None, court: str | None) -> str | None:
@@ -175,9 +186,9 @@ def normalize_registry_court(jurisdiction: str | None, court: str | None) -> str
     if not c:
         return c
     if (jurisdiction or "").upper() == "DE":
-        m = _DE_LOCAL_COURT.match(c)
+        m = _DE_COURT.match(c)
         if m:
-            return f"Amtsgericht {m.group(1)}"
+            return f"Amtsgericht {m.group('city').strip()}"
     return c
 
 

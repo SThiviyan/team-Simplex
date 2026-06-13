@@ -753,3 +753,31 @@ def test_matcher_jurisdiction_alias_and_empty_target():
     # An empty target constrains nothing — no blanket penalty.
     none = score_record(record, Target(name="Tesco", jurisdiction=""))
     assert none.jurisdiction_match
+
+
+def test_extract_payload_picks_validating_block_over_fragment():
+    from types import SimpleNamespace
+
+    from app.pipeline.agent import _extract_payload
+
+    def block(text):
+        return SimpleNamespace(type="text", text=text)
+
+    valid = (
+        '{"registry_id": null, "registry_court": null, '
+        '"name_normalized_register_name": null, "jurisdiction_confirmed": null, '
+        '"confidence": 0.0, "source": null, "no_match_reason": "no_match_in_sources", '
+        '"registered_address": null, "incorporation_date": null, '
+        '"organization_type": null, "status": null, "officers": null, '
+        '"reasoning": "not found"}'
+    )
+    # The LAST block is a citation fragment; the real JSON is earlier. The old
+    # "take the last text block" logic would have raised / leaked the fragment.
+    resp = SimpleNamespace(content=[block(valid), block("Sources: [1] : null,")])
+    payload = _extract_payload(resp)
+    assert payload is not None and payload.no_match_reason == "no_match_in_sources"
+    assert payload.registered_address is None
+
+    # No block validates -> None, never a fragment.
+    resp2 = SimpleNamespace(content=[block("just prose"), block(": null,")])
+    assert _extract_payload(resp2) is None

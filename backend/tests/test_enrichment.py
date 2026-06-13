@@ -178,3 +178,59 @@ def test_registry_court_comes_from_register_record():
                   registry_court="Amtsgericht München")
     merged = _merge_from_records(row, matching_records(row, [rec]))
     assert merged.registry_court == "Amtsgericht München"
+
+
+def test_scrub_kills_json_fragment_values():
+    from app.pipeline.enrichment import _scrub
+
+    # The ': null,' web-payload leak (and friends) must never reach the CSV.
+    row = _row(
+        registry_id="HRB 1", name_normalized_register_name="Acme GmbH",
+        registered_address=": null,", organization_type="null", status="N/A",
+        officers="  ", incorporation_date="2019-02-20",
+    )
+    out = _scrub(row)
+    assert out.registered_address is None
+    assert out.organization_type is None
+    assert out.status is None
+    assert out.officers is None
+    assert out.incorporation_date == "2019-02-20"  # real value untouched
+    assert out.registry_id == "HRB 1"
+
+
+def test_scrub_blanks_true_no_match_but_keeps_identified_no_id():
+    from app.pipeline.enrichment import _scrub
+
+    # True no-match: no id AND no name -> everything blank.
+    nomatch = _row(
+        no_match_reason="not_in_registry", registry_id=None,
+        name_normalized_register_name=None, registered_address=": null,",
+        organization_type="AG", status="active", source="some-non-url-ref",
+    )
+    out = _scrub(nomatch)
+    assert out.registered_address is None and out.organization_type is None
+    assert out.status is None and out.source is None
+
+    # Identified by name but no registry number -> keep the enrichment.
+    ided = _row(
+        no_match_reason="id_not_in_sources", registry_id=None,
+        name_normalized_register_name="bean ventures GmbH",
+        registered_address="Sachseln, CH", organization_type="GmbH",
+        status="active",
+    )
+    out2 = _scrub(ided)
+    assert out2.registered_address == "Sachseln, CH"
+    assert out2.organization_type == "GmbH" and out2.status == "active"
+
+
+def test_german_court_collapses_to_amtsgericht_city():
+    from app.search.registry_format import normalize_registry_court as n
+
+    assert n("DE", "Bavaria District court München") == "Amtsgericht München"
+    assert n("DE", "North Rhine-Westphalia District court Düsseldorf") == "Amtsgericht Düsseldorf"
+    assert n("DE", "Baden-Württemberg District court Stuttgart") == "Amtsgericht Stuttgart"
+    assert n("DE", "District court München") == "Amtsgericht München"
+    assert n("DE", "Local Court Munich") == "Amtsgericht Munich"
+    assert n("DE", "Amtsgericht München") == "Amtsgericht München"  # already canonical
+    # Non-DE jurisdictions are left alone.
+    assert n("PL", "SĄD REJONOWY DLA M.ST. WARSZAWY") == "SĄD REJONOWY DLA M.ST. WARSZAWY"

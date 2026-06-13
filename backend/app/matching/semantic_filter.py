@@ -109,12 +109,30 @@ Apply reasoning that pure string matching cannot:
 You MUST respond by calling the `submit_evaluation` tool exactly once. Do not
 write any prose outside the tool call.
 
-Corporate groups: when a bare brand query matches several entities of one group
-(holding plc vs operating DAC/A-S/GmbH subsidiaries), the query refers to the group's
-PRIMARY registered entity — the top holding / listed company — unless the query names
-the subsidiary explicitly. Never prefer a subsidiary just because its name equals the
-brand string; if the candidates do not let you tell which group entity is meant,
-decide no_match rather than guessing.
+6. WHEN TO MATCH vs ABSTAIN. A SINGLE candidate whose core name matches the
+   query (ignoring legal-suffix differences) IS a match — return it, do not
+   abstain just because it is the only option or is a small/obscure company.
+   Only return no_match/ambiguous when:
+     - TWO OR MORE genuinely DISTINCT entities fit equally well and nothing in
+       the query separates them, OR
+     - no candidate's core name actually matches the query.
+   A real registered entity that no one else can be confused with should be
+   matched even at a small risk — abstaining on a clear single hit is itself an
+   error.
+
+7. DON'T PICK A DIFFERENTLY-NAMED SIBLING. Companies in the same family often
+   differ by ONE meaning-bearing word: "X Trust Ltd" vs "X Services Ltd",
+   "X Holding" vs "X Operating", "X Group" vs "X Management". These are
+   DIFFERENT legal entities. Do NOT select a candidate whose core name differs
+   from the query by such a word unless the query itself contains that word.
+   If the only candidates are mismatched siblings, prefer no_match/ambiguous
+   over confidently returning the wrong entity.
+
+CORPORATE GROUPS. When a bare brand query matches several entities of one group
+(holding plc vs operating DAC/A-S/GmbH subsidiaries), prefer the group's PRIMARY
+registered entity — the top holding / listed company — unless the query names a
+subsidiary explicitly. This is a tie-breaker among multiple group entities, NOT
+a reason to abstain when only one clear entity is present.
 """
 
 # Forced-tool schema. Because we set tool_choice to this tool, Claude is

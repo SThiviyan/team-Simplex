@@ -22,6 +22,12 @@ services:
     volumes:
       - ./backend:/app/backend
       - backend-venv:/app/backend/.venv
+      # Event log on a named volume, NOT the bind mount: WAL/locking corrupts
+      # when the container and a host CLI write the same file across the
+      # macOS<->Linux boundary ("database disk image is malformed").
+      - backend-eventlog:/var/lib/agent-events
+    environment:
+      - EVENT_DB_PATH=/var/lib/agent-events/agent_events.db
     ports:
       - "8080:8080"
     env_file:
@@ -46,4 +52,5 @@ services:
 
 volumes:
   backend-venv:
+  backend-eventlog:
   frontend-node-modules:
