@@ -74,6 +74,24 @@ class ExtractionPayload(BaseModel):
     status: str | None = Field(
         description="Company status: active / dissolved / in_liquidation / dormant. Null if no source showed it."
     )
+    vat_number: str | None = Field(
+        description="VAT / USt-IdNr / TVA number as a source states it (e.g. 'DE266929333'). Null if no source showed it."
+    )
+    trade_names: str | None = Field(
+        description="Trading / brand / other registered names, distinct from the legal name; 'name; name'. Null if none shown."
+    )
+    industry_code: str | None = Field(
+        description="Industry classification code as the source gives it (NACE/NAF/SIC/WZ, e.g. '62.01'). Null if no source showed it."
+    )
+    industry: str | None = Field(
+        description="Industry / business-sector name for that code (e.g. 'Computer programming'). Null if no source showed it."
+    )
+    capitalization: str | None = Field(
+        description="Registered/share capital with currency as stated (e.g. 'EUR 25,000'). Null if no source showed it."
+    )
+    business_purpose: str | None = Field(
+        description="Registered business purpose / object (DE 'Gegenstand des Unternehmens'). Null if no source showed it."
+    )
     # --- Tier B (partial coverage — fill only when a source explicitly lists them) ---
     officers: str | None = Field(
         description="Officers/directors/legal representatives as 'role: name; role: name'. Null if no source listed any."
@@ -107,6 +125,24 @@ class EnrichmentPayload(BaseModel):
     status: str | None = Field(
         description="active / dissolved / in_liquidation / dormant. Null if not verifiable."
     )
+    vat_number: str | None = Field(
+        description="VAT / USt-IdNr / TVA number (e.g. 'DE266929333'). Null if not verifiable."
+    )
+    trade_names: str | None = Field(
+        description="Trading / brand names distinct from the legal name; 'name; name'. Null if none."
+    )
+    industry_code: str | None = Field(
+        description="Industry code (NACE/NAF/SIC/WZ, e.g. '62.01'). Null if not verifiable."
+    )
+    industry: str | None = Field(
+        description="Industry / sector name for that code. Null if not verifiable."
+    )
+    capitalization: str | None = Field(
+        description="Registered/share capital with currency (e.g. 'EUR 25,000'). Null if not verifiable."
+    )
+    business_purpose: str | None = Field(
+        description="Registered business purpose/object. Null if not verifiable."
+    )
     officers: str | None = Field(
         description="'role: name; role: name' for explicitly listed officers/directors. Null if none found."
     )
@@ -124,8 +160,9 @@ class ExtractionResult(BaseModel):
     abstention/calibration columns.
     """
 
-    # Truth-table column order: required minimum, Tier A, confidence_flag —
-    # then our extras (officers, numeric confidence) — and source LAST.
+    # Truth-table columns first, then the rest of Tier A (vat/trade names/
+    # industry/capital/purpose), then confidence_flag, Tier B (officers), the
+    # numeric confidence, and source LAST.
     query_id: str
     registry_id: str | None = None
     registry_court: str | None = None
@@ -136,6 +173,12 @@ class ExtractionResult(BaseModel):
     incorporation_date: str | None = None
     organization_type: str | None = None
     status: str | None = None
+    vat_number: str | None = None
+    trade_names: str | None = None
+    industry_code: str | None = None
+    industry: str | None = None
+    capitalization: str | None = None
+    business_purpose: str | None = None
     confidence_flag: str | None = None  # verified | probable | ambiguous | not_found | error
     officers: str | None = None  # Tier B
     confidence: float = 0.0
@@ -156,6 +199,12 @@ class ExtractionResult(BaseModel):
             incorporation_date=payload.incorporation_date,
             organization_type=payload.organization_type,
             status=payload.status,
+            vat_number=payload.vat_number,
+            trade_names=payload.trade_names,
+            industry_code=payload.industry_code,
+            industry=payload.industry,
+            capitalization=payload.capitalization,
+            business_purpose=payload.business_purpose,
             officers=payload.officers,
         )
 

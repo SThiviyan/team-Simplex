@@ -85,6 +85,7 @@ class GleifSearchProvider(SearchProvider):
                     address=e.get("address"),
                     organization_type=e.get("organization_type"),
                     status=e.get("entity_status"),
+                    trade_names=e.get("trade_names"),
                     metadata={
                         k: v
                         for k, v in (

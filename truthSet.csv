@@ -1,0 +1,51 @@
+query_id,registry_id,registry_court,name_normalized,jurisdiction_confirmed,no_match_reason,registered_address,incorporation_date,organization_type,status,confidence_flag
+p001,FN 13695 b,Landesgericht Linz,Danner OG,AT,,"Hasenfeld 7, 4222, St. Georgen an der Gusen, AT",1990-06-04,Offene Gesellschaft,active,verified
+p002,96970D Landes- und Handelsgericht Klagenfurt,,MAHLE Filtersysteme Austria GmbH,AT,,"St. Michael ob Bleiburg 19, 9143, St. Michael ob Bleiburg, AT",1987-12-16,GmbH,active,verified
+p003,42754,Reg. of Companies Bermuda,LOMAR CORPORATION LIMITED,BM,,"Hamilton, BM",,Limited,,verified
+p004,CHE-146.885.077,,Uphols Ventures AG,CH,,"Zug, CH",,AG,,verified
+p005,CHE-177.206.689,Kanton Obwalden,bean ventures GmbH,CH,,"Sachseln, CH",,Gesellschaft mit beschränkter Haftung,,verified
+p006,HE 413905,Nicosia,BROKTECH INSURANCE & REINSURANCE BROKER LIMITED,CY,,"Kosta Ourani 5, 3085, Limassol, CY",,Limited,,verified
+p007,HE265320,,Mastermind Shipmanagement Limited,CY,,"Limassol, CY",,Limited,,verified
+p008,328722,,PERLA RUBBIN AND SONS LTD,CY,,"Nikosia, CY",,Limited,,verified
+p009,HRB 247216,München,Agualeve GmbH,DE,,"Südliche Münchner Straße 60c, 82031, Grünwald, DE",2019-02-20,Gesellschaft mit beschränkter Haftung,active,verified
+p010,HRA 480574,Stuttgart,Auto-Fürst e.K.,DE,,"Bahnhofstraße 17, 77773, Schenkenzell, DE",2014-04-28,eingetragener Kaufmann,active,verified
+p011,HRB 799509,Stuttgart,EUMAX GmbH,DE,,"Berblingerstraße 1, 71254, Ditzingen, DE",2025-01-14,Gesellschaft mit beschränkter Haftung,active,verified
+p012,HRA 17569,Wuppertal,Ernst Winterhoff GmbH & Co. KG,DE,,"Walter-Freitag-Str. 10, 42899, Remscheid, NRW, DE",1916-12-12,GmbH & Co. KG,active,verified
+p013,HRB 87763,Darmstadt,FEPA GmbH,DE,,"Am Zollstock 3, 64546, Mörfelden-Walldorf, DE",2009-01-27,Gesellschaft mit beschränkter Haftung,active,verified
+p014,HRB 110771,Düsseldorf,Gerry W Online DACH GmbH,DE,,"Rheinpromenade 11, 40789, Monheim am Rhein, DE",2025-09-15,Gesellschaft mit beschränkter Haftung,active,verified
+p015,HRB 107954,Düsseldorf,H&B Handel GmbH,DE,,"Kokkolastraße 5, 40882, Ratingen, DE",2025-02-07,Gesellschaft mit beschränkter Haftung,active,verified
+p016,HRA 729735,Ulm,Holzhandel Lau e.K.,DE,,"Bihlafinger Straße 20, 88480, Achstetten, DE",2025-08-19,eingetragener Kaufmann,active,verified
+p017,HRB 107858,Mannheim,Lumesca GmbH,DE,,"Gablonzer Str. 28 a, 76185, Karlsruhe, DE",1997-06-02,Gesellschaft mit beschränkter Haftung,active,verified
+p018,HRB 46511,Bielefeld,NikuTRAX GmbH,DE,,"Im Hülsen 13, 33739, Bielefeld, DE",2025-10-09,Gesellschaft mit beschränkter Haftung,active,verified
+p019,HRB 201096,Aurich,Partner 1011201,DE,,"Wieseder Str. 56, 26446, Friedeburg, DE",2009-03-09,Gesellschaft mit beschränkter Haftung,active,verified
+p020,HRB 33562,Chemnitz,Pfotenliebe GmbH,DE,,"Einsiedler Hauptstraße 15, 09123, Chemnitz, DE",2021-02-02,Gesellschaft mit beschränkter Haftung,active,verified
+p021,HRA 16587,Bielefeld,WIBA 24 GmbH & Co. KG,DE,,"Querstraße 7, 33729, Bielefeld, DE",2017-08-30,GmbH & Co. KG,active,verified
+p022,HRB 123711,Köln,YH Handelsmarkt UG (haftungsbeschränkt),DE,,"Robert-Perthel-Straße 71-73, 50739, Köln, DE",2025-05-06,Unternehmergesellschaft (haftungsbeschränkt),active,verified
+p023,HRB 298947,München,luzemar GmbH,DE,,"Adams-Lehmann-Straße 107, 80797, München, DE",2024-12-10,Gesellschaft mit beschränkter Haftung,active,verified
+p024,HRB 10033,Paderborn,posylka.de GmbH,DE,,"Overhagener Weg 36, 59597, Erwitte, NRW, DE",2010-12-13,Gesellschaft mit beschränkter Haftung,active,verified
+p025,"M689607, 38788, folio 140 Mercantile Register Madrid",,"Döhler Fraga, S.L.U.",ES,,"Las Rozas, C/Jose Echegaray 8, Edificio 3 Planta 2a, Oficina 11, 28230, Las Rozas, ES",2003-04-25,S.L.U.,active,verified
+p026,983660952,Paris,HYDI CORP,FR,,"Paris, FR",,CORP,,verified
+p027,394 480 859 Greffe du Tribunal de Commerce de Rouen,,Veoneer France SAS,FR,,"boulevard Lénine BP 506, 76800, Saint-Etienne-du-Rouvray, FR",1994-03-23,SAS,active,verified
+p028,10527616,,ATLANTAS SHIP GROUP LIMITED,GB,,"Wembley, GB",,Private Company Limited by Shares,,verified
+p029,SC186794 Companies House,,JDR Cable Systems Ltd,GB,,"Apex 2, 97 Haymarket Terrace, EH12 5HD, Edinburgh, GB",1998-08-27,Limited,active,verified
+p030,10607900 Companies House,,RicCoffee (UK) Limited,GB,,"76 Cannon Street 2nd Floor, EC4N 6AE, London, GB",2017-02-07,Ltd,active,verified
+p031,5674101,,Union Maritime Limited,GB,,"Wembley, GB",,Private Company Limited by Shares,,verified
+p032,64562,,LS Assets Limited,GG,,"St Peter Port, GG",,Limited,,verified
+p033,63061,,Tufton Assets Limited,GG,,,,Limited,,verified
+p034,313041,,Eurolink Motorway Operation Ltd,IE,,"10 Earlsfort Terrace, D02 T380, Dublin 2, IE",,Ltd,,verified
+p035,2805280241 COMPANY REGISTER OF THE CHAMBER OF COMMERCE,,Uniconfort Srl,IT,,"VIA DELL'INDUSTRIA,21, 35018, S.MARTINO DI LUPARI (PD), IT",2000-01-02,Limited Liability Company,active,verified
+p036,80466,,DOMINION FIDUCIARY SERVICES LIMITED,JE,,"St. Helier, JE",,Limited,,verified
+p037,123445,,MATEL LTD,JE,,"St. Helier, JE",,Private Company Limited by Shares,,verified
+p038,10258975,,MATEL LTD,JE,,"St. Helier, JE",,Private Company Limited by Shares,,verified
+p039,B205241,,DBG Fund VII GP S.à r.l.,LU,,,,Sarl,,verified
+p040,1000743250,,Peak Energy Capital I LP,LU,,,,Limited Partnership,,verified
+p041,C 102935,Malta,Splendid Sea Ltd.,MT,,"Valletta, MT",,Ltd,,verified
+p042,73312207,,Dutch Home Label B.V.,NL,,"s-Gravendijckseweg 8, 2201CZ, Noordwijk, NL",2018-12-10,Besloten vennootschap,active,verified
+p043,82543364,,Hoyz B.V.,NL,,"Oostpolderweg 2, 2841 DA, Moordrecht, Zuid Holland, NL",2026-04-15,Besloten vennootschap,active,verified
+p044,73611662,,Maxecom B.V.,NL,,"Adriaan Mulderweg 9, 5657 EM, Eindhoven, NL",2019-01-07,Besloten vennootschap,active,verified
+p045,67020453,,More Footballs B.V.,NL,,"Maagdenburgstraat 36, 7421ZD, Deventer, NL",2016-04-01,Besloten vennootschap,active,verified
+p046,50083899,,Sporttrader B.V.,NL,,"Jan Tinbergenstraat 131, 7559 SP, Hengelo, Overijssel, NL",2010-05-27,Besloten vennootschap,active,verified
+p047,333798,S_D REJONOWY DLA M.ST. WARSZAWY W WARSZAWIE,MARO SPÓ_KA Z OGRANICZON_ ODPOWIEDZIALNO_CI_,PL,,"ul. PI_KNA, nr 24, lok. 26A, 00-549, WARSZAWA, MAZOWIECKIE, PL",2009-04-09,Spó_ka z ograniczon_ odpowiedzialno_ci_,active,verified
+p048,503883,Gda_sk,SOLSQUARE SPÓ_KA Z OGRANICZON_ ODPOWIEDZIALNO_CI_,PL,,"Lipowa 67B, 84-230, Rumia, PL",2014-03-28,Spó_ka z ograniczon_ odpowiedzialno_ci_,active,verified
+p049,2985400 New York Department of State,,"NEUMANN GRUPPE USA, INC.",US,,"111 river street suite 1220, 7030, hoboken, US",2003-12-04,INC.,active,verified
+p050,1409879,British Virgin Islands,TIDEMAR INTERNATIONAL LTD,VG,,"Tortola, VG",,Limited,,verified

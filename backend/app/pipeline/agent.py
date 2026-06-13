@@ -130,8 +130,9 @@ Output rules:
   query disambiguates them, do not pick one: no_match_reason 'ambiguous_candidates'
   AND leave every other field null — do NOT copy one candidate's address/date/etc.
 - Tier A/B enrichment (registered_address, incorporation_date, organization_type,
-  status, officers): fill ONLY values that literally appear in the tool results for
-  THIS entity — wrong enrichment is penalized, blank is neutral.
+  status, vat_number, trade_names, industry_code + industry, capitalization,
+  business_purpose, officers): fill ONLY values that literally appear in the tool
+  results for THIS entity — wrong enrichment is penalized, blank is neutral.
 - incorporation_date is the date the company was REGISTERED / INCORPORATED with the
   commercial register — NOT the brand's founding or establishment year. If a source
   gives a founding year and the register gives a later registration date, use the
@@ -207,6 +208,12 @@ def _mock_payload(query: QueryRow) -> ExtractionPayload:
         incorporation_date=None,
         organization_type=None,
         status=None,
+        vat_number=None,
+        trade_names=None,
+        industry_code=None,
+        industry=None,
+        capitalization=None,
+        business_purpose=None,
         officers=None,
         reasoning="mock mode",
     )
@@ -248,6 +255,13 @@ def _match_record(query_id: str, r: dict) -> dict | None:
         "address": r.get("address"),
         "organization_type": r.get("organization_type"),
         "status": r.get("status"),
+        "incorporation_date": r.get("incorporation_date"),
+        "vat_number": r.get("vat_number"),
+        "trade_names": r.get("trade_names"),
+        "industry_code": r.get("industry_code"),
+        "industry": r.get("industry"),
+        "capitalization": r.get("capitalization"),
+        "business_purpose": r.get("business_purpose"),
         "last_update": r.get("last_update"),
         "metadata": r.get("metadata") or {},
     }
@@ -421,6 +435,12 @@ def deterministic_foundation(query: QueryRow, records: list[dict]) -> Extraction
         incorporation_date=f.get("incorporation_date"),
         organization_type=f.get("organization_type"),
         status=f.get("status"),
+        vat_number=f.get("vat_number"),
+        trade_names=f.get("trade_names"),
+        industry_code=f.get("industry_code"),
+        industry=f.get("industry"),
+        capitalization=f.get("capitalization"),
+        business_purpose=f.get("business_purpose"),
         officers=None,
         reasoning="Single unambiguous registry match in the pre-gathered results "
         "(no LLM needed).",

@@ -92,6 +92,12 @@ export type ExtractionResult = {
   incorporation_date: string | null;
   organization_type: string | null;
   status: string | null;
+  vat_number: string | null;
+  trade_names: string | null;
+  industry_code: string | null;
+  industry: string | null;
+  capitalization: string | null;
+  business_purpose: string | null;
   confidence_flag: string | null;
   officers: string | null;
   confidence: number;

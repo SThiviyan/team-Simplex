@@ -39,6 +39,8 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
                 "address": full_address or None,
                 "incorporation_date": e.get("stiftelsesdato")
                 or e.get("registreringsdatoIEnhetsregisteret"),
+                "industry_code": (e.get("naeringskode1") or {}).get("kode"),
+                "industry": (e.get("naeringskode1") or {}).get("beskrivelse"),
             }
         )
     return out

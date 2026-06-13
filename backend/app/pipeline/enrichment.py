@@ -41,6 +41,12 @@ ENRICHABLE_FIELDS = (
     "incorporation_date",
     "organization_type",
     "status",
+    "vat_number",
+    "trade_names",
+    "industry_code",
+    "industry",
+    "capitalization",
+    "business_purpose",
     "officers",
 )
 
@@ -189,6 +195,14 @@ def _ascii_fold(value: str) -> str:
     return unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
 
 
+def _text_key(value: str | None) -> str | None:
+    """Loose text fingerprint for conflict detection: ascii-folded, lowercased,
+    whitespace-collapsed. Formatting-only differences don't read as conflicts."""
+    if not value:
+        return None
+    return " ".join(_ascii_fold(value).lower().split()) or None
+
+
 def resolve_conflict(values: list[tuple[str, str | None]]) -> str | None:
     """Apply the source-hierarchy conflict rule to a rank-ordered list of
     (raw_value, data_timestamp) for one field.
@@ -234,9 +248,14 @@ def _merge_from_records(
         ("organization_type", "organization_type", _legal_form_key, False),
         ("status", "status", normalize_status, True),
         ("registered_address", "address", _address_key, False),
-        ("registry_court", "registry_court",
-         lambda v: _ascii_fold(v or "").lower().strip() or None, False),
-        ("officers", "officers", lambda v: _ascii_fold(v or "").lower().strip() or None, False),
+        ("registry_court", "registry_court", _text_key, False),
+        ("vat_number", "vat_number", lambda v: _ALNUM.sub("", (v or "").lower()) or None, False),
+        ("trade_names", "trade_names", _text_key, False),
+        ("industry_code", "industry_code", lambda v: _ALNUM.sub("", (v or "").lower()) or None, False),
+        ("industry", "industry", _text_key, False),
+        ("capitalization", "capitalization", _text_key, False),
+        ("business_purpose", "business_purpose", _text_key, False),
+        ("officers", "officers", _text_key, False),
     )
     for field, key, normalize, canonical in field_specs:
         # Group raw values by normalized key, keeping rank order; collapse
@@ -371,6 +390,12 @@ _ALL_DATA_FIELDS = (
     "incorporation_date",
     "organization_type",
     "status",
+    "vat_number",
+    "trade_names",
+    "industry_code",
+    "industry",
+    "capitalization",
+    "business_purpose",
     "officers",
 )
 
@@ -542,6 +567,7 @@ async def _impressum_fill(
         ("registry_court", "registry_court"),
         ("officers", "officers"),
         ("registered_address", "registered_address"),
+        ("vat_number", "vat_number"),  # §5 Impressum must print the USt-IdNr
     ):
         if facts.get(key) and not getattr(result, field):
             updates[field] = facts[key]
@@ -573,6 +599,12 @@ Rules:
 - incorporation_date: the REGISTRATION/incorporation date with the register, NOT the founding/establishment year. ISO YYYY-MM-DD (YYYY alone if only the year is verifiable).
 - organization_type: the legal form as registered (GmbH, Ltd, B.V., S.à r.l., ...).
 - status: one of active / dissolved / in_liquidation / dormant, else null.
+- vat_number: the VAT / USt-IdNr / TVA number exactly as printed (e.g. 'DE266929333').
+- trade_names: trading/brand names distinct from the legal name, 'name; name'.
+- industry_code: the industry classification code (NACE/NAF/SIC/WZ, e.g. '62.01').
+- industry: the industry/sector name for that code.
+- capitalization: registered/share capital with currency (e.g. 'EUR 25,000').
+- business_purpose: the registered business purpose/object of the company.
 - officers: 'role: name; role: name' for directors/officers a source explicitly lists.
 - source: ONE URL of the page that supports the filled values; null if nothing filled.
 - Respond with the JSON object only."""

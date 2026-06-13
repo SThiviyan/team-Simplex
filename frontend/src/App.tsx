@@ -179,7 +179,13 @@ function ResultCard({ query, r }: { query: string; r: ExtractionResult }) {
         <Field label="Organization type" value={r.organization_type} />
         <Field label="Status" value={r.status} />
         <Field label="Incorporation date" value={r.incorporation_date} />
+        <Field label="VAT number" value={r.vat_number} mono />
+        <Field label="Industry code" value={r.industry_code} mono />
+        <Field label="Industry" value={r.industry} />
+        <Field label="Capitalization" value={r.capitalization} />
         <Field label="No-match reason" value={r.no_match_reason} />
+        <Field label="Trade names" value={r.trade_names} span />
+        <Field label="Business purpose" value={r.business_purpose} span />
         <Field label="Registered address" value={r.registered_address} span />
         <Field label="Officers" value={r.officers} span />
       </dl>

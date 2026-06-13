@@ -51,5 +51,7 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
             "url": f"{WEB}/{vat}" if vat else None,
             "address": full_address or None,
             "incorporation_date": _iso_date(d.get("startdate")),
+            "industry_code": str(d["industrycode"]) if d.get("industrycode") else None,
+            "industry": d.get("industrydesc"),
         }
     ]

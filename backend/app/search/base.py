@@ -38,6 +38,13 @@ class SearchResult(BaseModel):
     organization_type: str | None = None  # legal form / organization type (e.g. GmbH)
     status: str | None = None            # company status as the source reports it
     incorporation_date: str | None = None  # registration/founding date when reported
+    # Further Tier A datapoints, when the source reports them.
+    vat_number: str | None = None        # VAT / USt-IdNr / TVA
+    trade_names: str | None = None       # trading / other names ('name; name')
+    industry_code: str | None = None     # NACE/NAF/SIC/WZ code
+    industry: str | None = None          # industry / sector name
+    capitalization: str | None = None    # registered/share capital
+    business_purpose: str | None = None  # registered business object/purpose
     # Per-source signals the resolver can rank on, e.g. {"sitelinks": 87}.
     metadata: dict = Field(default_factory=dict)
 

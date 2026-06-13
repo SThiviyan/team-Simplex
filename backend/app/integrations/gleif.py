@@ -62,6 +62,9 @@ def _normalise(rec: dict) -> dict:
     # Only the free-text legal form is human-readable; the bare 4-char ELF code
     # ("ZRPO") is meaningless in the output, so it is not surfaced as a value.
     organization_type = legal_form.get("other") or None
+    other_names = [
+        n.get("name") for n in (ent.get("otherNames") or []) if n.get("name")
+    ]
     return {
         "lei": a.get("lei"),
         # National registry number + the registry it was issued by (RA code).
@@ -78,6 +81,7 @@ def _normalise(rec: dict) -> dict:
         "address": _format_address(addr),
         "last_update": registration.get("lastUpdateDate"),
         "organization_type": organization_type,
+        "trade_names": "; ".join(other_names) if other_names else None,
     }
 
 

@@ -164,6 +164,12 @@ def test_grounding_blanks_unbacked_registry_ids():
         incorporation_date=None,
         organization_type=None,
         status=None,
+        vat_number=None,
+        trade_names=None,
+        industry_code=None,
+        industry=None,
+        capitalization=None,
+        business_purpose=None,
         officers=None,
         reasoning="looks right",
     )
@@ -195,6 +201,12 @@ def test_grounding_replaces_fabricated_source_urls():
         incorporation_date=None,
         organization_type=None,
         status=None,
+        vat_number=None,
+        trade_names=None,
+        industry_code=None,
+        industry=None,
+        capitalization=None,
+        business_purpose=None,
         officers=None,
         reasoning="match",
     )
@@ -303,7 +315,7 @@ async def test_agent_first_round_forces_tool_use(monkeypatch):
             "confidence": 0.0, "source": None,
             "no_match_reason": "not_in_registry", "reasoning": "test",
             "registered_address": None, "incorporation_date": None,
-            "organization_type": None, "status": None, "officers": None,
+            "organization_type": None, "status": None, "vat_number": None, "trade_names": None, "industry_code": None, "industry": None, "capitalization": None, "business_purpose": None, "officers": None,
         }
     )
 
@@ -610,6 +622,12 @@ def test_grounding_blanks_non_registry_identifier_shapes():
             incorporation_date=None,
             organization_type=None,
             status=None,
+            vat_number=None,
+            trade_names=None,
+            industry_code=None,
+            industry=None,
+            capitalization=None,
+            business_purpose=None,
             officers=None,
             reasoning="r",
         )
@@ -768,7 +786,9 @@ def test_extract_payload_picks_validating_block_over_fragment():
         '"name_normalized_register_name": null, "jurisdiction_confirmed": null, '
         '"confidence": 0.0, "source": null, "no_match_reason": "no_match_in_sources", '
         '"registered_address": null, "incorporation_date": null, '
-        '"organization_type": null, "status": null, "officers": null, '
+        '"organization_type": null, "status": null, "vat_number": null, '
+        '"trade_names": null, "industry_code": null, "industry": null, '
+        '"capitalization": null, "business_purpose": null, "officers": null, '
         '"reasoning": "not found"}'
     )
     # The LAST block is a citation fragment; the real JSON is earlier. The old

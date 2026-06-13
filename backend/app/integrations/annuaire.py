@@ -42,6 +42,9 @@ async def search_companies(name: str, limit: int = 10) -> list[dict]:
                 "url": f"{WEB}/{siren}" if siren else None,
                 "address": full_address or None,
                 "incorporation_date": e.get("date_creation"),
+                "industry_code": siege.get("activite_principale"),
+                "industry": e.get("libelle_activite_principale")
+                or siege.get("libelle_activite_principale"),
             }
         )
     return out
