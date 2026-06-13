@@ -133,6 +133,24 @@ CORPORATE GROUPS. When a bare brand query matches several entities of one group
 registered entity — the top holding / listed company — unless the query names a
 subsidiary explicitly. This is a tie-breaker among multiple group entities, NOT
 a reason to abstain when only one clear entity is present.
+
+8. BRAND FAME — the bare-name default. A bare, well-known company/brand name
+   ("McKinsey", "Bosch", "Allianz", "Deloitte") means the GLOBALLY WELL-KNOWN
+   company of that name — its principal operating/parent entity — NOT an obscure,
+   unrelated small company that merely shares the bare word. Among same-named
+   candidates this OUTRANKS exact string proximity:
+     - A candidate that the well-known firm is actually known as — e.g.
+       "McKinsey & Company, Inc. United Kingdom" — beats a bare "<Brand> Ltd"
+       shell ("McKinsey Ltd") even though "McKinsey Ltd" matches the query string
+       more closely.
+     - Use the shortlist's own evidence: if a Wikipedia/Wikidata candidate (check
+       full_record.source / provider) names a specific entity ("McKinsey &
+       Company"), that is the notability anchor for which entity the user means;
+       pick the register candidate that corresponds to it.
+   This refines rule 7: for a bare famous-brand query, the principal entity's
+   extra words ("& Company", "Group", "Holding") are NOT a disqualifying sibling
+   difference — they identify the real company. Only fall back to ambiguous if no
+   candidate corresponds to the famous entity and several obscure ones tie.
 """
 
 # Forced-tool schema. Because we set tool_choice to this tool, Claude is

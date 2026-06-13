@@ -41,9 +41,15 @@ NAME_FIELD = "name_normalized_register_name"
 JURISDICTION_FIELD = "jurisdiction_confirmed"
 CONFIDENCE_FIELD = "confidence"
 
-# Default scorer: token_sort_ratio is robust to word order ("Sinpex GmbH"
-# vs "GmbH Sinpex") and to extra tokens, which is what registry names need.
-DEFAULT_SCORER: Callable[..., float] = fuzz.token_sort_ratio
+# Default scorer: WRatio (adaptive — blends ratio/partial/token-set/token-sort).
+# token_sort_ratio alone scored a bare brand query far too low against the real
+# entity's full name ("mckinsey" vs "McKinsey & Company, Inc. United Kingdom" =
+# 34) and dropped it below the gross-filter cutoff, so only an obscure "McKinsey
+# Ltd" shell survived and the verifier never saw the flagship. WRatio rewards the
+# query being a subset of a longer registered name (=90 there), so the principal
+# entity reaches the shortlist; the semantic verifier (sibling + brand-fame
+# rules + confidence floor) then makes the precise, false-positive-safe pick.
+DEFAULT_SCORER: Callable[..., float] = fuzz.WRatio
 
 
 @dataclass(frozen=True)
