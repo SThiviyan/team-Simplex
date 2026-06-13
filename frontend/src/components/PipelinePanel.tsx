@@ -9,6 +9,9 @@ export type PipelineData = {
   jurisdictions: string[];
   fuzzy: number;
   matches: number;
+  // Distinct sources that corroborated the winning entities (graph
+  // consolidation / fame). Summed across the resolved winners.
+  corroboration: number;
   winners: Winner[];
 };
 
@@ -17,6 +20,7 @@ type StageDef = { id: string; label: string; desc: string };
 // The nodes the data flows through, top to bottom. `winner` is rendered apart.
 const STAGES: StageDef[] = [
   { id: 'fetch', label: 'Fetching', desc: 'Querying company registers' },
+  { id: 'consolidate', label: 'Consolidate', desc: 'Merge duplicate sources (fame)' },
   { id: 'nation', label: 'Nation filter', desc: 'Scoping to jurisdiction' },
   { id: 'fuzzy', label: 'Fuzzy filter', desc: 'RapidFuzz shortlist' },
   { id: 'semantic', label: 'Semantic filter', desc: 'Claude evaluation' },
@@ -35,6 +39,8 @@ function stageCount(id: string, data: PipelineData | null): number | null {
   switch (id) {
     case 'fetch':
       return data.fetched;
+    case 'consolidate':
+      return data.corroboration; // distinct sources agreeing on the winners
     case 'nation':
       return data.fetched; // server gathers jurisdiction-scoped, so all kept
     case 'fuzzy':

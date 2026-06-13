@@ -26,8 +26,8 @@ function useStageProgress(running: boolean): number {
     if (!running) return;
     setStage(0);
     const id = setInterval(() => {
-      // Walk fetch -> nation -> fuzzy -> semantic, then hold on the last.
-      setStage((s) => (s < 3 ? s + 1 : s));
+      // Walk fetch -> consolidate -> nation -> fuzzy -> semantic, then hold.
+      setStage((s) => (s < 4 ? s + 1 : s));
     }, 650);
     return () => clearInterval(id);
   }, [running]);
@@ -42,7 +42,12 @@ function pipelineData(state: State): PipelineData | null {
   ];
   const fuzzy = state.winners.reduce((acc, w) => acc + (w.candidates?.length ?? 0), 0);
   const matches = state.winners.filter((w) => w.decision === 'match').length;
-  return { fetched, jurisdictions, fuzzy, matches, winners: state.winners };
+  // Distinct sources that corroborated each winning entity (graph consolidation).
+  const corroboration = state.winners.reduce(
+    (acc, w) => acc + (w.winning_candidate?._match?.provider_count ?? 0),
+    0,
+  );
+  return { fetched, jurisdictions, fuzzy, matches, corroboration, winners: state.winners };
 }
 
 export default function App() {

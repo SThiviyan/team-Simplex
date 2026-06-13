@@ -4,6 +4,14 @@ export type MatchDiagnostics = {
   name_score: number; // fuzzy name similarity, 0..1
   jurisdiction_match: boolean;
   prior_confidence: number; // confidence from the gather layer, pre re-scoring
+  // Corroboration / "fame" from the graph-consolidation layer (Layer 0): how
+  // many distinct sources agreed on this entity and how much that lifted its
+  // confidence. Present once consolidation + fame-boost have run.
+  base_confidence?: number; // confidence before the corroboration boost
+  confidence_boost?: number; // lift added by multi-source corroboration
+  fame?: number; // total mentions merged into this entity
+  provider_count?: number; // distinct sources that returned this entity
+  completeness?: number; // share of key registry fields populated, 0..1
 };
 
 export type CompanyRecord = {
@@ -23,6 +31,11 @@ export type CompanyRecord = {
   snippet: string | null;
   // Present on candidates that went through the RapidFuzz layer.
   _match?: MatchDiagnostics;
+  // Corroboration metadata attached by the graph-consolidation layer.
+  _fame?: number;
+  _provider_count?: number;
+  _providers?: string[];
+  _completeness?: number;
 };
 
 export type QueryRow = {

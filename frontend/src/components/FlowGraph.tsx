@@ -14,6 +14,7 @@ type StageId =
   | 'input'
   | 'routing'
   | 'fetch'
+  | 'consolidate'
   | 'fuzzy'
   | 'jurisdiction'
   | 'semantic'
@@ -120,6 +121,26 @@ function stageDetail(
           query && query.count > cands.length
             ? `Top ${cands.length} of ${query.count} gathered records, ranked by source confidence.`
             : 'Ranked by the confidence the source reported at gather time.',
+        items,
+      };
+    }
+    case 'consolidate': {
+      const pcOf = (c: CompanyRecord) => c._match?.provider_count ?? c._provider_count ?? 1;
+      const items = [...cands]
+        .sort((a, b) => pcOf(b) - pcOf(a))
+        .map((c) => {
+          const pc = pcOf(c);
+          const boost = c._match?.confidence_boost ?? 0;
+          const sub =
+            `${pc} source${pc === 1 ? '' : 's'}` + (boost > 0 ? ` · +${Math.round(boost * 100)}%` : '');
+          return asItem(c, c.confidence, sub);
+        });
+      return {
+        title: 'Consolidated entities',
+        note:
+          'Duplicate records from different registers are merged into one entity (graph '
+          + 'connected components). "Fame" = how many sources corroborated it, which lifts a '
+          + 'well-attested match toward 1.0.',
         items,
       };
     }
@@ -335,6 +356,8 @@ function QueryFlow({ winner, query }: { winner: Winner; query?: QueryRow }) {
   const aligned = hasJuris ? cands.filter((c) => c._match?.jurisdiction_match).length : fuzzy;
   const matched = winner.decision === 'match';
   const verified = matched ? 1 : 0;
+  // Distinct sources that corroborated the winning entity (graph consolidation).
+  const winnerFame = matched ? winner.winning_candidate?._match?.provider_count ?? 1 : null;
   const pct = Math.round((winner.confidence ?? 0) * 100);
   const label = winner.jurisdiction ? `${winner.name} [${winner.jurisdiction}]` : winner.name;
 
@@ -373,6 +396,15 @@ function QueryFlow({ winner, query }: { winner: Winner; query?: QueryRow }) {
       label: 'Fetch',
       sub: 'gathered records',
       ring: fetched > 0 ? GREEN : RED,
+    },
+    {
+      id: 'consolidate',
+      count: fetched,
+      big: winnerFame ? `${winnerFame}×` : String(fetched),
+      small: winnerFame ? 'sources' : 'merged',
+      label: 'Consolidate',
+      sub: 'merge duplicate sources',
+      ring: winnerFame && winnerFame > 1 ? GREEN : GRAY,
     },
     {
       id: 'fuzzy',
@@ -414,7 +446,9 @@ function QueryFlow({ winner, query }: { winner: Winner; query?: QueryRow }) {
   const maxCount = Math.max(...stages.map((s) => s.count), 1);
 
   // Items filtered out on the hop AFTER each stage (drawn next to connectors).
+  // Order: input, routing, fetch, consolidate, fuzzy, jurisdiction, semantic.
   const drops: (number | undefined)[] = [
+    undefined,
     undefined,
     undefined,
     Math.max(0, fetched - fuzzy),

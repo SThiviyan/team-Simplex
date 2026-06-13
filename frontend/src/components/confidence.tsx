@@ -84,6 +84,36 @@ export function confidenceSignals(rec: CompanyRecord): Signal[] {
       hint: 'Confidence the gather layer reported before fuzzy re-scoring.',
     });
   }
+  // --- Corroboration / "fame" from the graph-consolidation layer ----------
+  const providerCount = m?.provider_count ?? rec._provider_count;
+  if (typeof providerCount === 'number' && providerCount > 1) {
+    const provs = rec._providers?.length ? ` · ${rec._providers.join(', ')}` : '';
+    s.push({
+      label: 'Corroborating sources',
+      value: `${providerCount}×${provs}`,
+      ok: true,
+      hint: 'Distinct registers/sources that independently returned this entity; '
+        + 'duplicates were merged into one record by graph consolidation.',
+    });
+  }
+  if (m && typeof m.confidence_boost === 'number' && m.confidence_boost > 0) {
+    s.push({
+      label: 'Fame boost',
+      value: `+${Math.round(m.confidence_boost * 100)}%`,
+      ok: true,
+      hint: 'Confidence lift from multi-source corroboration (well-attested entities '
+        + 'are nudged toward 1.0).',
+    });
+  }
+  const completeness = m?.completeness ?? rec._completeness;
+  if (typeof completeness === 'number') {
+    s.push({
+      label: 'Record completeness',
+      value: `${Math.round(completeness * 100)}%`,
+      ok: completeness >= 0.5,
+      hint: 'Share of key registry attributes populated after merging duplicate records.',
+    });
+  }
   return s;
 }
 
