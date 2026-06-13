@@ -38,6 +38,8 @@ type Stage = {
   confidence?: number; // confidence observed here (drives ring color)
   grounded?: boolean;
   detail?: string;
+  emphasis?: boolean; // the outcome node (Winner, or Match when no winner id)
+  displayConfidence?: number; // % to show — the final calibrated score (matches the card)
 };
 
 const STAGE_ORDER: StageId[] = ['gather', 'identify', 'ground', 'match', 'enrich', 'winner'];
@@ -148,10 +150,35 @@ const TRAJECTORY_LABEL: Record<string, string> = {
 };
 const TRAJECTORY_ORDER = ['agent', 'matcher', 'final'];
 
-export function FlowGraph({ events }: { events: PipelineEvent[] }) {
+export function FlowGraph({
+  events,
+  finalConfidence,
+  hasId,
+}: {
+  events: PipelineEvent[];
+  finalConfidence?: number; // the result's calibrated confidence (== the card's %)
+  hasId?: boolean; // did the run end with a registry_id?
+}) {
   const { stages, trajectory, contradictions } = buildStages(events);
   if (events.length === 0) return null;
   const maxCount = Math.max(...stages.map((s) => s.count), 1);
+
+  // The OUTCOME node: the Winner when a registry_id was found, otherwise Match —
+  // so when Enrich/Winner produced nothing, Match is the highlighted endpoint.
+  // It shows the FINAL calibrated confidence (the same number as the result card
+  // below), keeping the diagram and the card in lock-step.
+  const winnerStage = stages.find((s) => s.id === 'winner');
+  const ended = hasId ?? (winnerStage ? winnerStage.count > 0 : false);
+  const finalConf =
+    finalConfidence ??
+    trajectory.find((t) => t.label === 'final')?.confidence ??
+    trajectory[trajectory.length - 1]?.confidence;
+  const outcomeId: StageId = ended ? 'winner' : 'match';
+  const outcome = stages.find((s) => s.id === outcomeId && s.state !== 'pending');
+  if (outcome) {
+    outcome.emphasis = true;
+    if (finalConf !== undefined) outcome.displayConfidence = finalConf;
+  }
 
   return (
     <div className="space-y-3 rounded-xl border border-line bg-paper px-3 py-3">
@@ -208,7 +235,14 @@ export function FlowGraph({ events }: { events: PipelineEvent[] }) {
 
 function StageNode({ stage, maxCount }: { stage: Stage; maxCount: number }) {
   const active = stage.state === 'done' || stage.state === 'active';
-  const size = active ? sizeFor(Math.max(stage.count, 1), maxCount) : SIZE_MIN;
+  // The displayed confidence: the final calibrated score on the emphasised
+  // outcome node (so it equals the result card), else the stage's own value.
+  const shownConf = stage.emphasis && stage.displayConfidence !== undefined
+    ? stage.displayConfidence
+    : stage.confidence;
+  // Emphasised outcome node is drawn at full size and a thicker ring so it
+  // reads as "the winner" even when it's Match (no Enrich/Winner result).
+  const size = stage.emphasis ? SIZE_MAX : active ? sizeFor(Math.max(stage.count, 1), maxCount) : SIZE_MIN;
   const ring =
     stage.state === 'pending'
       ? GRAY
@@ -216,27 +250,29 @@ function StageNode({ stage, maxCount }: { stage: Stage; maxCount: number }) {
         ? stage.grounded === false
           ? RED
           : GREEN
-        : ringForConf(stage.confidence);
+        : ringForConf(shownConf);
   const dim = stage.state === 'pending' || stage.state === 'skipped';
 
   return (
     <div className="flex w-[84px] shrink-0 flex-col items-center gap-1.5">
       <div className="flex items-center justify-center" style={{ height: BAND }}>
         <div
-          className={`flex flex-col items-center justify-center rounded-full bg-paper shadow-sm transition-all ${
+          className={`flex flex-col items-center justify-center rounded-full transition-all ${
             stage.state === 'active' ? 'animate-pulse' : ''
-          }`}
+          } ${stage.emphasis ? 'shadow-md ring-2 ring-offset-2' : 'shadow-sm bg-paper'}`}
           style={{
             width: size,
             height: size,
-            border: `2.5px solid ${ring}`,
+            border: `${stage.emphasis ? 3.5 : 2.5}px solid ${ring}`,
+            background: stage.emphasis ? `${ring}1a` : undefined, // faint tint of the ring color
             opacity: dim ? 0.45 : 1,
+            ...(stage.emphasis ? { ['--tw-ring-color' as any]: `${ring}55` } : {}),
           }}
           title={stage.detail || stage.label}
         >
-          {stage.confidence !== undefined ? (
+          {shownConf !== undefined ? (
             <span className="font-mono text-[12px] font-semibold tabular-nums leading-none text-ink">
-              {Math.round(stage.confidence * 100)}%
+              {Math.round(shownConf * 100)}%
             </span>
           ) : stage.count > 0 ? (
             <span className="font-mono text-[12px] tabular-nums leading-none text-ink">
@@ -250,17 +286,15 @@ function StageNode({ stage, maxCount }: { stage: Stage; maxCount: number }) {
         </div>
       </div>
       <span
-        className={`w-full truncate text-center text-[11px] font-medium leading-tight ${
-          dim ? 'text-muted' : 'text-ink'
+        className={`w-full truncate text-center text-[11px] leading-tight ${
+          stage.emphasis ? 'font-semibold text-accent' : dim ? 'font-medium text-muted' : 'font-medium text-ink'
         }`}
       >
         {stage.label}
       </span>
-      {stage.detail ? (
-        <span className="-mt-1 w-full truncate text-center text-[9px] leading-tight text-muted">
-          {stage.detail}
-        </span>
-      ) : null}
+      <span className="-mt-1 w-full truncate text-center text-[9px] leading-tight text-muted">
+        {stage.emphasis ? 'winner' : stage.detail || ''}
+      </span>
     </div>
   );
 }

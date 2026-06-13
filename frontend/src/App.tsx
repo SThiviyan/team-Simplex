@@ -125,7 +125,11 @@ function Results({
   // the calibrated score.
   return (
     <section aria-label="Search complete" className="space-y-4 animate-fade-in-up">
-      <FlowGraph events={events} />
+      <FlowGraph
+        events={events}
+        finalConfidence={state.result.confidence}
+        hasId={!!state.result.registry_id}
+      />
       <ResultCard query={state.query} r={state.result} />
     </section>
   );
