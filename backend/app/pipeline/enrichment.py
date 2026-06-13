@@ -533,7 +533,7 @@ async def _web_fill(
     response = None
     for _ in range(MAX_WEB_CONTINUATIONS):
         response = await client.messages.create(
-            model=settings.matching_model,
+            model=settings.enrichment_model,
             max_tokens=4000,
             system=[{"type": "text", "text": _WEB_SYSTEM, "cache_control": {"type": "ephemeral"}}],
             messages=messages,

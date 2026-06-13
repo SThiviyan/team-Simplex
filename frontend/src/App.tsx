@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { describe, EventFeed, useLiveRun } from './components/liveFeed';
 import { PipelinePanel } from './components/PipelinePanel';
 import { SearchBar } from './components/SearchBar';
 import { ExtractionResult, resolveCompany } from './api';
@@ -38,6 +39,35 @@ export default function App() {
   );
 }
 
+function SearchProgress({ query }: { query: string }) {
+  const events = useLiveRun(true);
+  const last = events.length ? events[events.length - 1] : null;
+  return (
+    <section aria-label="Resolving" className="space-y-3 animate-fade-in-up">
+      <div className="flex items-center gap-2 text-sm text-ink">
+        <Spinner />
+        <span>
+          Resolving <span className="font-medium">{query}</span> — checking registers, grounding,
+          enriching…
+        </span>
+      </div>
+      {last ? (
+        <p className="font-mono text-[11px] text-muted truncate">{describe(last)}</p>
+      ) : null}
+      <EventFeed events={events} label="Resolution progress" max="max-h-60" />
+    </section>
+  );
+}
+
+function Spinner() {
+  return (
+    <span
+      className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-line border-t-accent"
+      aria-hidden
+    />
+  );
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main className="mx-auto w-full max-w-2xl px-5 pt-16 pb-24 sm:pt-24">
@@ -71,7 +101,7 @@ const FLAG_STYLE: Record<string, string> = {
 
 function Results({ state, onRetry }: { state: State; onRetry: () => void }) {
   if (state.kind === 'idle') return <IdleState />;
-  if (state.kind === 'loading') return <LoadingState />;
+  if (state.kind === 'loading') return <SearchProgress query={state.query} />;
   if (state.kind === 'error') return <ErrorState message={state.message} onRetry={onRetry} />;
 
   // The full pipeline (registry foundation hierarchy + Tier A/B enrichment)
@@ -192,26 +222,6 @@ function IdleState() {
         Type a company name, optionally with a jurisdiction (e.g. "Tesla, US"). We query every
         relevant register, then RapidFuzz + Claude pick the single best-matching registered entity.
       </p>
-    </section>
-  );
-}
-
-function LoadingState() {
-  return (
-    <section aria-label="Loading" className="space-y-0 animate-pulse">
-      <div className="h-3 w-32 rounded bg-line mb-4" />
-      <ul className="divide-y divide-line">
-        {[0, 1, 2].map((i) => (
-          <li key={i} className="py-5 first:pt-3">
-            <div className="flex items-baseline gap-4">
-              <div className="h-4 w-2/3 rounded bg-line" />
-              <div className="ml-auto h-3 w-20 rounded bg-line" />
-            </div>
-            <div className="mt-2.5 h-3 w-full rounded bg-line/70" />
-            <div className="mt-1.5 h-3 w-5/6 rounded bg-line/70" />
-          </li>
-        ))}
-      </ul>
     </section>
   );
 }

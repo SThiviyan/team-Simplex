@@ -57,9 +57,16 @@ class Settings(BaseSettings):
         default="claude-opus-4-8", description="Model for the Layer-1 research agent"
     )
     matching_model: str = Field(
-        default="claude-sonnet-4-6",
+        default="claude-haiku-4-5-20251001",
         description="Model for the matching-layer semantic filter — a constrained forced-tool "
-        "classification where a faster tier holds up (gated on the practice-set score)",
+        "pick-from-candidates task where Haiku matched Sonnet's accuracy at ~2x the speed "
+        "(measured on the truth set), so it is the default for speed",
+    )
+    enrichment_model: str = Field(
+        default="claude-sonnet-4-6",
+        description="Model for the Layer-2 web-search enrichment fill. Kept on Sonnet: Haiku "
+        "collapsed Tier A extraction (incorporation_date 0/50) in the measured run, so the "
+        "enrichment model is split from the (faster) matcher model",
     )
     pipeline_mock: bool = Field(
         default=False,
