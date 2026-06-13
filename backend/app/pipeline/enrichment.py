@@ -35,6 +35,7 @@ from app.search.base import normalize_country
 logger = logging.getLogger(__name__)
 
 ENRICHABLE_FIELDS = (
+    "registry_court",
     "registered_address",
     "incorporation_date",
     "organization_type",
@@ -149,19 +150,57 @@ def matching_records(result: ExtractionResult, records: list[dict]) -> list[dict
     return matched
 
 
+def most_recent_date(*candidates: str | None) -> str | None:
+    """The LATEST of the candidate ISO dates. A brand is founded before its
+    current legal entity is incorporated (Tesco: 1919 founding vs 1947
+    Companies House incorporation) — when sources disagree, the most recent
+    date is the registration of the entity itself. ISO strings compare
+    lexicographically; a bare year sorts before that year's full dates."""
+    dates = [normalize_date(c) for c in candidates]
+    dates = [d for d in dates if d and re.match(r"^\d{4}(-\d{2}-\d{2})?$", d)]
+    return max(dates) if dates else None
+
+
 def _merge_from_records(result: ExtractionResult, matched: list[dict]) -> ExtractionResult:
-    """Pass 1: fill empty fields from the gathered evidence, best source first."""
+    """Pass 1: merge the gathered evidence, best source first.
+
+    Two rules beyond fill-if-empty:
+    - The NATIONAL REGISTER is authoritative for incorporation_date,
+      organization_type and registry_court: its value replaces whatever an
+      agent answer or aggregator put there (Wikidata legal forms are English
+      glosses; its inception is the brand's founding, not the incorporation).
+    - Date conflicts between non-registry sources resolve to the MOST RECENT
+      candidate (founding < incorporation < re-registration).
+    """
     updates: dict = {}
+    registry_dates: list[str | None] = []
+    other_dates: list[str | None] = [result.incorporation_date]
     for record in matched:
+        from_registry = _authority(record.get("provider")) == 0
+        (registry_dates if from_registry else other_dates).append(
+            record.get("incorporation_date")
+        )
+        # Registry overrides for the fields it is authoritative on.
+        if from_registry:
+            for field, key in (
+                ("organization_type", "organization_type"),
+                ("registry_court", "registry_court"),
+            ):
+                if record.get(key) and field not in updates:
+                    updates[field] = record[key]
+        # Everything else: fill only what is still empty, best authority first.
         candidates = {
             "registered_address": record.get("address"),
-            "incorporation_date": normalize_date(record.get("incorporation_date")),
             "organization_type": record.get("organization_type"),
             "status": normalize_status(record.get("status")),
         }
         for field, value in candidates.items():
             if value and not getattr(result, field) and field not in updates:
                 updates[field] = value
+
+    date = most_recent_date(*registry_dates) or most_recent_date(*other_dates)
+    if date and date != result.incorporation_date:
+        updates["incorporation_date"] = date
     return result.model_copy(update=updates) if updates else result
 
 
@@ -186,9 +225,12 @@ async def _cross_reference(
         except Exception:
             details = {}
         updates = {}
+        # NOTE: details["incorporation_date"] (Wikidata P571 'inception') is
+        # deliberately NOT used — it is the brand's founding (Tesco 1919), not
+        # the incorporation of the registered entity (1947). Leaving the field
+        # empty lets the web fill find the registry's date with a citation.
         for field, key in (
             ("registered_address", "address"),
-            ("incorporation_date", "incorporation_date"),
             ("organization_type", "organization_type"),
             ("status", "status"),
             ("officers", "officers"),

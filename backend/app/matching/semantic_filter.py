@@ -108,6 +108,13 @@ Apply reasoning that pure string matching cannot:
 
 You MUST respond by calling the `submit_evaluation` tool exactly once. Do not
 write any prose outside the tool call.
+
+Corporate groups: when a bare brand query matches several entities of one group
+(holding plc vs operating DAC/A-S/GmbH subsidiaries), the query refers to the group's
+PRIMARY registered entity — the top holding / listed company — unless the query names
+the subsidiary explicitly. Never prefer a subsidiary just because its name equals the
+brand string; if the candidates do not let you tell which group entity is meant,
+decide no_match rather than guessing.
 """
 
 # Forced-tool schema. Because we set tool_choice to this tool, Claude is

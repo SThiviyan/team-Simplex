@@ -136,3 +136,45 @@ def test_impressum_extracts_mandated_facts():
 
     # A bare contact page (address only) yields no register facts.
     assert "registry_id" not in extract_company_facts("Kontakt: Musterweg 1, 12345 Berlin")
+
+
+def test_most_recent_date_rule():
+    from app.pipeline.enrichment import most_recent_date
+
+    assert most_recent_date("1919", "1947-11-27") == "1947-11-27"
+    assert most_recent_date(None, "1990-06-04", "1987-12-16") == "1990-06-04"
+    assert most_recent_date("garbage", None) is None
+    assert most_recent_date("20.02.2019", "2018-01-01") == "2019-02-20"
+
+
+def test_registry_overrides_brand_founding_date_and_legal_form():
+    # Agent answer carried Wikidata-flavoured values (brand founding 1919,
+    # English legal-form gloss); the register record must replace both.
+    row = _row(
+        registry_id="00445790",
+        name_normalized_register_name="TESCO PLC",
+        incorporation_date="1919",
+        organization_type="public limited company",
+    )
+    registry_rec = _record(
+        registry_id="00445790", provider="companies_house",
+        incorporation_date="1947-11-27", organization_type="Public limited company",
+        registry_court=None,
+    )
+    merged = _merge_from_records(row, matching_records(row, [registry_rec]))
+    assert merged.incorporation_date == "1947-11-27"  # registry wins, even though older year given first
+    assert merged.organization_type == "Public limited company"
+
+    # Without a registry source, conflicting dates resolve to the most recent.
+    row2 = _row(registry_id="X1", name_normalized_register_name="Acme", incorporation_date="1919")
+    wiki_rec = _record(registry_id="X1", provider="wikidata", incorporation_date="1947-11-27")
+    merged2 = _merge_from_records(row2, matching_records(row2, [wiki_rec]))
+    assert merged2.incorporation_date == "1947-11-27"
+
+
+def test_registry_court_comes_from_register_record():
+    row = _row(registry_id="HRB 1", name_normalized_register_name="Acme GmbH")
+    rec = _record(registry_id="HRB 1", provider="handelsregister",
+                  registry_court="Amtsgericht München")
+    merged = _merge_from_records(row, matching_records(row, [rec]))
+    assert merged.registry_court == "Amtsgericht München"

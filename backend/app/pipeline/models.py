@@ -92,6 +92,9 @@ class EnrichmentPayload(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    registry_court: str | None = Field(
+        description="The specific register court or registry office that issued the registration (e.g. 'Amtsgericht München', 'Greffe du Tribunal de Commerce de Rouen'). Null if not verifiable."
+    )
     registered_address: str | None = Field(
         description="Registered/legal address as 'street, postcode, city, country'. Null if not verifiable."
     )

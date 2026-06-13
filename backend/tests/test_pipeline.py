@@ -736,3 +736,20 @@ def test_match_without_id_gets_reason_and_loses_to_grounded_agent():
     assert _names_agree("Heineken N.V.", "heineken n.v.")
     assert not _names_agree("Tesco", "Shopify Inc.")
     assert not _names_agree(None, "Tesco")
+
+
+def test_matcher_jurisdiction_alias_and_empty_target():
+    from app.matching.company_matcher import Target, score_record
+
+    record = {
+        "name_normalized_register_name": "TESCO PLC",
+        "jurisdiction_confirmed": "GB",
+        "confidence": 0.9,
+    }
+    # "UK" target must NOT penalize a GB record (alias, same country).
+    uk = score_record(record, Target(name="Tesco", jurisdiction="UK"))
+    gb = score_record(record, Target(name="Tesco", jurisdiction="GB"))
+    assert uk.jurisdiction_match and gb.jurisdiction_match
+    # An empty target constrains nothing — no blanket penalty.
+    none = score_record(record, Target(name="Tesco", jurisdiction=""))
+    assert none.jurisdiction_match

@@ -58,8 +58,9 @@ def _normalise(rec: dict) -> dict:
     addr = ent.get("legalAddress") or {}
     registration = a.get("registration") or {}
     legal_form = ent.get("legalForm") or {}
-    # Prefer the free-text legal form ("other"); fall back to the ELF code id.
-    organization_type = legal_form.get("other") or legal_form.get("id")
+    # Only the free-text legal form is human-readable; the bare 4-char ELF code
+    # ("ZRPO") is meaningless in the output, so it is not surfaced as a value.
+    organization_type = legal_form.get("other") or None
     return {
         "lei": a.get("lei"),
         # National registry number + the registry it was issued by (RA code).

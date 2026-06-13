@@ -87,6 +87,16 @@ Sub-jurisdictional structure:
 - USA: companies register per state (Secretary of State); there is no federal registry.
 - Canada: federal plus provincial registries; UAE: emirate-level registries.
 
+Corporate groups — picking the right entity for a bare brand query:
+- A query like 'Ryanair' or 'Maersk' that matches SEVERAL entities of the same group
+  (holding/parent plc, operating subsidiaries like 'X DAC' / 'X A/S', country units)
+  refers to the group's PRIMARY registered entity in the queried jurisdiction — usually
+  the top holding / listed company (e.g. 'Ryanair Holdings plc', 'A.P. Møller - Mærsk A/S'),
+  NOT an operating subsidiary, even when the subsidiary's name is the closer string match.
+- Pick a subsidiary only when the query names it (legal form, qualifier) or only one
+  entity exists. If the evidence cannot tell which group entity is meant, use
+  no_match_reason 'ambiguous_candidates' instead of guessing.
+
 Sole proprietors / freelancers: in many places (UK sole traders, Irish sole traders,
 Spanish autónomos, US sole proprietors) the correct answer is NO registry entry — return
 null fields with no_match_reason 'not_in_registry'. Others DO register them (Poland

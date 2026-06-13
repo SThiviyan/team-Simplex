@@ -68,15 +68,12 @@ def test_skip_registers_that_cannot_match_jurisdiction():
     assert de == {"gleif", "wikidata", "handelsregister"}
 
 
-def test_no_jurisdiction_includes_all():
+def test_no_jurisdiction_uses_global_sources_only():
+    # Without a country we stay on the worldwide sources: nothing becomes
+    # unreachable (GLEIF/Wikidata cover every jurisdiction) and the query
+    # doesn't fan out to a dozen irrelevant national registers.
     p = _providers()
-    assert {x.name for x in select_providers(p, None)} == {
-        "gleif",
-        "wikidata",
-        "handelsregister",
-        "brreg",
-        "annuaire",
-    }
+    assert {x.name for x in select_providers(p, None)} == {"gleif", "wikidata"}
 
 
 async def test_csv_search_reports_skipped_sources():

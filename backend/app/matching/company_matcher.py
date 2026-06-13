@@ -79,7 +79,12 @@ class Candidate:
 
 
 def _normalize_jurisdiction(value: str | None) -> str:
-    return (value or "").strip().upper()
+    """Country part, ISO-normalized ("UK" -> "GB", "DE-BY" -> "DE") so the
+    comparison never penalizes a record for a spelling difference."""
+    from app.search.base import normalize_country
+
+    base = (value or "").strip().upper().split("-")[0]
+    return normalize_country(base) or ""
 
 
 def update_confidence(
@@ -132,9 +137,12 @@ def score_record(
     else:
         name_score = 0.0
 
-    jurisdiction_match = _normalize_jurisdiction(
-        record.get(JURISDICTION_FIELD)
-    ) == _normalize_jurisdiction(target.jurisdiction)
+    # An empty target jurisdiction constrains nothing: every record counts as
+    # matching instead of every record being penalized against "".
+    target_cc = _normalize_jurisdiction(target.jurisdiction)
+    jurisdiction_match = not target_cc or (
+        _normalize_jurisdiction(record.get(JURISDICTION_FIELD)) == target_cc
+    )
 
     prior = record.get(CONFIDENCE_FIELD)
     prior = float(prior) if isinstance(prior, (int, float)) else 0.0

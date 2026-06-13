@@ -79,10 +79,14 @@ def parse_query_csv(text: str) -> list[tuple[str, str | None]]:
 def select_providers(
     providers: list[SearchProvider], jurisdiction: str | None
 ) -> list[SearchProvider]:
-    """With a jurisdiction: global providers + that country's register. Without
-    one: every provider (include all)."""
+    """With a jurisdiction: global providers + that country's register(s).
+
+    Without one: only the global sources (GLEIF + Wikidata). They cover every
+    jurisdiction, so nothing becomes unreachable — while fanning out to a
+    dozen national registers (including a slow scrape) for a country-less
+    query multiplies latency without adding recall for an unknown country."""
     if not jurisdiction:
-        return list(providers)
+        return [p for p in providers if p.jurisdictions is None]
     cc = jurisdiction.upper()
     return [p for p in providers if p.jurisdictions is None or cc in p.jurisdictions]
 
