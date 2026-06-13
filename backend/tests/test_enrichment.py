@@ -1,12 +1,14 @@
 """Layer-2 enrichment: deterministic merge, calibration flags, normalization."""
 
-from app.pipeline.enrichment import (
+from app.pipeline.confidence import (
     FLAG_AMBIGUOUS,
     FLAG_ERROR,
     FLAG_NOT_FOUND,
     FLAG_PROBABLE,
     FLAG_VERIFIED,
-    _confidence_flag,
+    confidence_flag as _confidence_flag,
+)
+from app.pipeline.enrichment import (
     _echo_jurisdiction,
     _merge_from_records,
     matching_records,

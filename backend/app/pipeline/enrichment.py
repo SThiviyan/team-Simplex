@@ -29,6 +29,7 @@ import anthropic
 
 from app.config import settings
 from app.pipeline import event_log
+from app.pipeline.confidence import FLAG_AMBIGUOUS, compute_confidence
 from app.pipeline.models import EnrichmentPayload, ExtractionResult, QueryRow
 from app.search.base import normalize_country
 from app.search.source_ranking import order_records
@@ -50,14 +51,7 @@ ENRICHABLE_FIELDS = (
     "officers",
 )
 
-# confidence_flag vocabulary (one per row, drives the confidence caps below).
-FLAG_VERIFIED = "verified"      # registry-backed ID, corroborated
-FLAG_PROBABLE = "probable"      # ID present but single-source
-FLAG_AMBIGUOUS = "ambiguous"    # several candidates, none chosen
-FLAG_NOT_FOUND = "not_found"    # honest blank (no ID in any source)
-FLAG_ERROR = "error"            # the pipeline failed, not the registry
-
-_ERROR_PREFIXES = ("layer1_error", "pipeline_error")
+# confidence_flag vocabulary + the calibration scorer live in confidence.py.
 
 # Canonical status vocabulary + per-language register terms (static domain
 # vocabulary, not data-dependent tuning).
@@ -688,37 +682,6 @@ async def _web_fill(
     return result
 
 
-def _confidence_flag(result: ExtractionResult, matched: list[dict]) -> str:
-    reason = result.no_match_reason or ""
-    if reason.startswith(_ERROR_PREFIXES):
-        return FLAG_ERROR
-    if reason.startswith("ambiguous_candidates"):
-        return FLAG_AMBIGUOUS
-    if not result.registry_id:
-        return FLAG_NOT_FOUND
-    # Verified: the ID comes from (or is corroborated by) a national register,
-    # or two independent sources agree on it.
-    providers_with_id = {
-        r.get("provider") for r in matched if _ids_match(result.registry_id, r.get("registry_id"))
-    }
-    if providers_with_id & _registry_provider_names():
-        return FLAG_VERIFIED
-    if len(providers_with_id) >= 2:
-        return FLAG_VERIFIED
-    return FLAG_PROBABLE
-
-
-# Calibration: the flag bounds how confident the row may claim to be. A wrong
-# confident answer scores worse than a blank one, so caps only ever lower.
-_CONFIDENCE_CAPS = {
-    FLAG_ERROR: 0.0,
-    FLAG_AMBIGUOUS: 0.4,
-    FLAG_NOT_FOUND: 0.6,
-    FLAG_PROBABLE: 0.85,
-    FLAG_VERIFIED: 1.0,
-}
-
-
 def _echo_jurisdiction(result: ExtractionResult, query: QueryRow) -> str | None:
     """Answer in the caller's convention: confirming 'UK' as 'GB' is the same
     fact spelled differently — echo the query's code when they normalize to
@@ -796,19 +759,20 @@ async def enrich_result(
                 update={"incorporation_date": normalize_date(result.incorporation_date)}
             )
 
-    flag = _confidence_flag(result, matched)
-    # Contradictions are reasons for doubt: each unresolved cross-source
-    # disagreement lowers the calibrated confidence, and any contradiction stops
-    # a row from being "verified" (independent sources didn't actually agree).
-    confidence = result.confidence
-    if contradictions:
-        flag = FLAG_PROBABLE if flag == FLAG_VERIFIED else flag
-        confidence = max(0.0, confidence - min(0.3, 0.1 * len(contradictions)))
-        for c in contradictions:
-            await event_log.log_event(
-                run_id, "contradiction", query.query_id,
-                field=c["field"], values=c["values"],
-            )
+    # Contradictions are reasons for doubt: surface each one. The calibration
+    # scorer (below) turns them into a confidence penalty + flag downgrade.
+    for c in contradictions:
+        await event_log.log_event(
+            run_id, "contradiction", query.query_id,
+            field=c["field"], values=c["values"],
+        )
+
+    # ONE deterministic calibration verdict: the flag and the [0, 1] number are
+    # both derived from the same observable evidence signals (registry-backing,
+    # corroboration, jurisdiction alignment, Tier A coverage, contradictions),
+    # so two equally-evidenced rows always score the same and every point is
+    # attributable. See app/pipeline/confidence.py.
+    scored = compute_confidence(result, matched, contradictions, query)
 
     # Output formatting LAST (after grounding/matching ran on raw values):
     # reshape registry_id/court to the jurisdiction's conventional form
@@ -820,8 +784,8 @@ async def enrich_result(
         update={
             "registry_id": normalize_registry_id(cc, result.registry_id),
             "registry_court": normalize_registry_court(cc, result.registry_court),
-            "confidence_flag": flag,
-            "confidence": round(min(confidence, _CONFIDENCE_CAPS[flag]), 2),
+            "confidence_flag": scored.flag,
+            "confidence": scored.value,
             "jurisdiction_confirmed": _echo_jurisdiction(result, query),
         }
     )
@@ -829,7 +793,8 @@ async def enrich_result(
     result = _scrub(result)
     await event_log.log_event(
         run_id, "enrichment_done", query.query_id,
-        flag=flag, confidence=result.confidence,
+        flag=scored.flag, confidence=result.confidence,
+        signals=scored.as_event(),
         filled=[f for f in ENRICHABLE_FIELDS if getattr(result, f)],
         empty=_missing_fields(result),
         contradictions=len(contradictions),

@@ -1,4 +1,4 @@
-import { ExtractionResult, PipelineEvent } from '../api';
+import { ConfidenceComponent, ExtractionResult, PipelineEvent } from '../api';
 
 // ---------------------------------------------------------------------------
 // Pipeline flow graph in the MCP-branch style: circular "father" stage nodes on
@@ -21,7 +21,10 @@ function sizeFor(count: number, maxCount: number): number {
   const t = Math.sqrt(Math.max(count, 0) / Math.max(maxCount, 1));
   return Math.round(SIZE_MIN + (SIZE_MAX - SIZE_MIN) * Math.min(t, 1));
 }
-function ringForConf(conf: number | undefined): string {
+// The ONE color rule, used for every confidence read-out (stage rings, the
+// final outcome node, and the result card's % badge) so color always tracks the
+// same number. Green >= 0.7, amber >= 0.4, red below; gray when unknown.
+export function ringForConf(conf: number | undefined): string {
   if (conf === undefined) return GRAY;
   if (conf >= 0.7) return GREEN;
   if (conf >= 0.4) return AMBER;
@@ -371,13 +374,57 @@ export function confidenceSignals(r: ExtractionResult, queryJurisdiction?: strin
   return s;
 }
 
+function fmtPoints(p: number): string {
+  const sign = p > 0 ? '+' : p < 0 ? '−' : '';
+  return `${sign}${Math.abs(p).toFixed(2)}`;
+}
+
 export function ConfidenceSignals({
   result,
   queryJurisdiction,
+  breakdown,
 }: {
   result: ExtractionResult;
   queryJurisdiction?: string;
+  breakdown?: ConfidenceComponent[];
 }) {
+  // Preferred view: the deterministic point breakdown from the backend — each
+  // signal's contribution, summing to the final confidence (fully traceable).
+  if (breakdown && breakdown.length) {
+    const pct = Math.round((result.confidence ?? 0) * 100);
+    return (
+      <div className="space-y-1 border-t border-line pt-2 text-[12px]">
+        <p className="text-[10px] uppercase tracking-wide text-muted">How the score is built</p>
+        <ul className="space-y-1">
+          {breakdown.map((c) => (
+            <li key={c.label} className="flex items-baseline justify-between gap-3">
+              <span className="flex items-center gap-1.5 text-muted">
+                <span
+                  className={
+                    c.points > 0 ? 'text-emerald-600' : c.points < 0 ? 'text-red-600' : 'text-muted/40'
+                  }
+                >
+                  {c.points > 0 ? '✓' : c.points < 0 ? '✕' : '○'}
+                </span>
+                {c.label}
+              </span>
+              <span className="flex items-baseline gap-2 text-right">
+                <span className="text-muted/80">{c.detail}</span>
+                <span className="w-12 font-mono tabular-nums text-ink">{fmtPoints(c.points)}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+        <div className="flex items-baseline justify-between border-t border-line/60 pt-1 font-medium">
+          <span className="text-muted">Calibrated confidence</span>
+          <span className="font-mono tabular-nums" style={{ color: ringForConf(result.confidence) }}>
+            {pct}%
+          </span>
+        </div>
+      </div>
+    );
+  }
+  // Fallback (e.g. a cached result with no live events): qualitative signals.
   const signals = confidenceSignals(result, queryJurisdiction);
   return (
     <ul className="space-y-1 border-t border-line pt-2 text-[12px]">

@@ -1,9 +1,16 @@
 import { useState } from 'react';
 import { describe, EventFeed, useLiveRun } from './components/liveFeed';
-import { ConfidenceSignals, FlowGraph } from './components/FlowGraph';
+import { ConfidenceSignals, FlowGraph, ringForConf } from './components/FlowGraph';
 import { PipelinePanel } from './components/PipelinePanel';
 import { SearchBar } from './components/SearchBar';
-import { ExtractionResult, parseQuery, PipelineEvent, resolveCompany } from './api';
+import {
+  ConfidenceComponent,
+  confidenceBreakdown,
+  ExtractionResult,
+  parseQuery,
+  PipelineEvent,
+  resolveCompany,
+} from './api';
 
 type State =
   | { kind: 'idle' }
@@ -130,12 +137,20 @@ function Results({
         finalConfidence={state.result.confidence}
         hasId={!!state.result.registry_id}
       />
-      <ResultCard query={state.query} r={state.result} />
+      <ResultCard query={state.query} r={state.result} breakdown={confidenceBreakdown(events)} />
     </section>
   );
 }
 
-function ResultCard({ query, r }: { query: string; r: ExtractionResult }) {
+function ResultCard({
+  query,
+  r,
+  breakdown,
+}: {
+  query: string;
+  r: ExtractionResult;
+  breakdown?: ConfidenceComponent[];
+}) {
   const pct = Math.round((r.confidence ?? 0) * 100);
   const flag = r.confidence_flag ?? (r.registry_id ? 'probable' : 'not_found');
   const matched = !!r.registry_id || !!r.name_normalized_register_name;
@@ -161,8 +176,9 @@ function ResultCard({ query, r }: { query: string; r: ExtractionResult }) {
             {flag}
           </span>
           <span
-            className="rounded-full bg-accent/10 px-2.5 py-1 text-xs font-semibold tabular-nums text-accent"
-            title="confidence (calibrated)"
+            className="rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums"
+            style={{ color: ringForConf(r.confidence), background: `${ringForConf(r.confidence)}1a` }}
+            title="confidence (calibrated) — color matches the flow graph"
           >
             {pct}%
           </span>
@@ -200,8 +216,12 @@ function ResultCard({ query, r }: { query: string; r: ExtractionResult }) {
         </dl>
       </div>
 
-      {/* Why the confidence is what it is — the signals behind the score. */}
-      <ConfidenceSignals result={r} queryJurisdiction={parseQuery(query).jurisdiction} />
+      {/* Why the confidence is what it is — the deterministic signal breakdown. */}
+      <ConfidenceSignals
+        result={r}
+        queryJurisdiction={parseQuery(query).jurisdiction}
+        breakdown={breakdown}
+      />
 
       <div className="flex items-center justify-between gap-3 border-t border-line pt-2">
         <span className="text-[10px] uppercase tracking-wide text-muted">Source</span>

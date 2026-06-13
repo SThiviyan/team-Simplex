@@ -161,6 +161,24 @@ export type PipelineEvent = {
   payload: Record<string, unknown>;
 };
 
+// One named contribution to the deterministic confidence score (backend
+// app/pipeline/confidence.py — emitted in the enrichment_done event). The final
+// confidence is the sum of these, so the score is fully traceable.
+export type ConfidenceComponent = { label: string; points: number; detail: string };
+
+/** The confidence breakdown from the latest enrichment_done event, if any. */
+export function confidenceBreakdown(
+  events: PipelineEvent[],
+): ConfidenceComponent[] | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].event_type === 'enrichment_done') {
+      const sig = (events[i].payload as { signals?: unknown }).signals;
+      return Array.isArray(sig) ? (sig as ConfidenceComponent[]) : undefined;
+    }
+  }
+  return undefined;
+}
+
 export async function listRuns(): Promise<PipelineRun[]> {
   const r = await fetch('/api/pipeline/runs');
   if (!r.ok) throw new Error(`runs failed: ${r.status}`);

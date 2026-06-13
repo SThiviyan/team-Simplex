@@ -448,10 +448,13 @@ async def test_recursion_reenters_layer1(monkeypatch, mock_mode):
 
     assert gathered_names == ["BMW", "Bayerische Motoren Werke"]  # one recursion round
     assert result.registry_id == "HRB 42243"
-    # Layer 2 calibration: a single-source (non-registry-provider) ID is capped
-    # at the 'probable' ceiling and flagged as such.
+    # Layer 2 calibration is deterministic and additive (see confidence.py): a
+    # single-source (non-registry-provider) ID flags 'probable', and the number
+    # is the sum of its earned signals — 0.50 (official number) + 0.10
+    # (jurisdiction matches the requested DE), with no register-backing,
+    # corroboration or Tier A coverage = 0.60.
     assert result.confidence_flag == "probable"
-    assert result.confidence == 0.85
+    assert result.confidence == 0.6
 
 
 async def test_matching_path_runs_and_logs_filter_stats(mock_mode, monkeypatch):
