@@ -90,12 +90,38 @@ async def _run_matching(query: QueryRow, records: list[dict], run_id: str) -> di
     return match
 
 
+def _result_cache_key(query: QueryRow) -> str:
+    from app.search.base import normalize_country
+
+    cc = normalize_country((query.jurisdiction or "").split("-")[0]) or (query.jurisdiction or "")
+    return f"{query.name.strip().lower()}|{cc.upper()}"
+
+
 async def process_query(query: QueryRow, run_id: str) -> ExtractionResult:
     """Layer 1 decides WHICH entity; Layer 2 enriches it (Tier A/B) and stamps
     the calibration verdict (confidence_flag + caps). Every row goes through
     enrichment so blanks are marked and confidence is consistent."""
+    # Optional full-result replay cache (testing): return a stored answer for an
+    # identical (name, jurisdiction) with no API/LLM calls.
+    use_cache = settings.pipeline_result_cache and not settings.pipeline_mock
+    if use_cache:
+        from app.search import persistent_cache
+
+        cached = persistent_cache.get(
+            "result", _result_cache_key(query), max_age=settings.search_cache_ttl_seconds
+        )
+        if cached is not None:
+            await event_log.log_event(run_id, "result_cache_hit", query.query_id)
+            return ExtractionResult(**{**cached, "query_id": query.query_id})
+
     row, records = await _decide(query, run_id)
-    return await enrich_result(query, row, records, run_id)
+    result = await enrich_result(query, row, records, run_id)
+
+    if use_cache:
+        from app.search import persistent_cache
+
+        persistent_cache.set("result", _result_cache_key(query), result.model_dump())
+    return result
 
 
 async def _decide(query: QueryRow, run_id: str) -> tuple[ExtractionResult, list[dict]]:

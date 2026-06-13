@@ -16,10 +16,12 @@ API_BASE = "https://api.gleif.org/api/v1"
 RECORD_WEB = "https://search.gleif.org/#/record"
 
 _HEADERS = {"Accept": "application/vnd.api+json"}
-# GLEIF's free tier allows ~60 requests/minute. A high-concurrency batch fires
-# dozens of searches at once; spacing them ~1.1s apart keeps every request
-# inside the quota (queued, not 429-rejected) — correctness over burst speed.
-_MIN_INTERVAL = 1.1
+# Spacing between GLEIF calls (global per-IP). At ~0.6s (≈100/min) the throttle
+# queue for a batch drains roughly twice as fast as the old 1.1s, so rows wait
+# less for GLEIF while staying clear of 429s; rate_limited_get still backs off on
+# any 429. With the per-provider 60s timeout, queued calls complete rather than
+# being cancelled (which is what starved the GLEIF-only jurisdictions).
+_MIN_INTERVAL = 0.6
 
 
 def _format_address(addr: dict) -> str | None:

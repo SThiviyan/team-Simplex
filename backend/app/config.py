@@ -50,6 +50,18 @@ class Settings(BaseSettings):
         "On = more datapoints (scored); off = faster batches. The MCP branch's owner-lookup "
         "opt-in equivalent",
     )
+    # --- Persistent caching (testing / repeated lookups) --------------------
+    search_cache_ttl_seconds: float = Field(
+        default=7 * 24 * 3600.0,
+        description="How long on-disk cached API search results stay valid. Long by default so "
+        "re-running the same query skips the slow sources; clear via persistent_cache.clear()",
+    )
+    pipeline_result_cache: bool = Field(
+        default=False,
+        description="Cache the WHOLE pipeline answer per (name, jurisdiction) on disk and replay "
+        "it with zero API/LLM calls. Off by default (so code changes take effect); turn on for "
+        "fast repeat testing of unchanged logic",
+    )
 
     # --- Pipeline (registry-lookup agent chain) ---
     # The Anthropic SDK reads ANTHROPIC_API_KEY from the environment itself.

@@ -1,33 +1,55 @@
 import { ExtractionResult, PipelineEvent } from '../api';
 
 // ---------------------------------------------------------------------------
-// Pipeline flow graph + confidence-along-the-way, driven by the run's event
-// log. Mirrors the MCP branch's idea: show the stages the company passes
-// through and how confident the system is at each, ending in a calibrated
-// final score with the signals that justify it.
+// Pipeline flow graph in the MCP-branch style: circular "father" stage nodes on
+// one horizontal axis, each ringed green/amber/red by the confidence at that
+// stage and sized by how many items reached it, with fan connectors between and
+// the confidence trajectory along the way. Driven by the run's event log.
 
-type StageState = 'pending' | 'active' | 'done' | 'skipped';
+// Status ring colors (from the MCP branch).
+const GREEN = '#4E9B61';
+const AMBER = '#D9A03F';
+const RED = '#C7553F';
+const GRAY = '#C2BAAB';
+
+const SIZE_MIN = 40;
+const SIZE_MAX = 78;
+const BAND = SIZE_MAX;
+
+function sizeFor(count: number, maxCount: number): number {
+  // Area tracks the count (sqrt), like the MCP father circles.
+  const t = Math.sqrt(Math.max(count, 0) / Math.max(maxCount, 1));
+  return Math.round(SIZE_MIN + (SIZE_MAX - SIZE_MIN) * Math.min(t, 1));
+}
+function ringForConf(conf: number | undefined): string {
+  if (conf === undefined) return GRAY;
+  if (conf >= 0.7) return GREEN;
+  if (conf >= 0.4) return AMBER;
+  return RED;
+}
+
+type StageId = 'gather' | 'identify' | 'ground' | 'match' | 'enrich' | 'winner';
 
 type Stage = {
-  key: string;
+  id: StageId;
   label: string;
-  state: StageState;
+  state: 'pending' | 'active' | 'done' | 'skipped';
+  count: number; // items reaching this stage (drives circle size)
+  confidence?: number; // confidence observed here (drives ring color)
+  grounded?: boolean;
   detail?: string;
-  confidence?: number; // confidence observed at this stage, if any
 };
 
-const STAGE_ORDER = ['gather', 'identify', 'ground', 'match', 'enrich', 'done'] as const;
-const STAGE_LABEL: Record<string, string> = {
+const STAGE_ORDER: StageId[] = ['gather', 'identify', 'ground', 'match', 'enrich', 'winner'];
+const STAGE_LABEL: Record<StageId, string> = {
   gather: 'Gather',
   identify: 'Identify',
   ground: 'Ground',
   match: 'Match',
   enrich: 'Enrich',
-  done: 'Result',
+  winner: 'Winner',
 };
-
-// Which stage each event type belongs to.
-const EVENT_STAGE: Record<string, string> = {
+const EVENT_STAGE: Record<string, StageId> = {
   mcp_selected: 'gather',
   mcp_connected: 'gather',
   tool_call: 'gather',
@@ -45,36 +67,45 @@ const EVENT_STAGE: Record<string, string> = {
   impressum_checked: 'enrich',
   enrichment_web_fill: 'enrich',
   enrichment_done: 'enrich',
-  query_completed: 'done',
+  query_completed: 'winner',
 };
 
-/** Build the staged view + the confidence trajectory from a run's events. */
 export function buildStages(events: PipelineEvent[]): {
   stages: Stage[];
   trajectory: { label: string; confidence: number }[];
 } {
-  const seen = new Map<string, Stage>();
-  for (const key of STAGE_ORDER) {
-    seen.set(key, { key, label: STAGE_LABEL[key], state: 'pending' });
+  const map = new Map<StageId, Stage>();
+  for (const id of STAGE_ORDER) {
+    map.set(id, { id, label: STAGE_LABEL[id], state: 'pending', count: 0 });
   }
   const trajectory: { label: string; confidence: number }[] = [];
 
   for (const e of events) {
-    const stageKey = EVENT_STAGE[e.event_type];
-    if (!stageKey) continue;
-    const st = seen.get(stageKey)!;
+    const id = EVENT_STAGE[e.event_type];
+    if (!id) continue;
+    const st = map.get(id)!;
     st.state = 'done';
     const p = e.payload as Record<string, any>;
 
-    if (e.event_type === 'eval_skipped') st.detail = 'eval skipped (clear answer)';
-    if (e.event_type === 'fastpath_match') st.detail = 'single registry match';
-    if (e.event_type === 'grounding_check') {
-      st.detail = p.grounded ? 'id grounded in evidence' : 'ungrounded — blanked';
-    }
     if (e.event_type === 'tool_result' && typeof p.record_count === 'number') {
-      st.detail = `${p.record_count} records`;
+      st.count += p.record_count;
     }
-
+    if (e.event_type === 'eval_started' && typeof p.record_count === 'number') {
+      st.count = Math.max(st.count, p.record_count);
+    }
+    if (e.event_type === 'eval_result' && typeof p.kept_candidates === 'number') {
+      st.count = p.kept_candidates;
+    }
+    if (e.event_type === 'fastpath_match') st.detail = 'single match';
+    if (e.event_type === 'eval_skipped') st.detail = 'skipped';
+    if (e.event_type === 'grounding_check') {
+      st.grounded = !!p.grounded;
+      st.detail = p.grounded ? 'grounded' : 'blanked';
+    }
+    if (e.event_type === 'query_completed') {
+      st.count = p.registry_id ? 1 : 0;
+      st.detail = p.registry_id ?? p.no_match_reason ?? '';
+    }
     if (typeof p.confidence === 'number') {
       st.confidence = p.confidence;
       const labels: Record<string, string> = {
@@ -88,42 +119,43 @@ export function buildStages(events: PipelineEvent[]): {
     }
   }
 
-  // Mark stages before the last-touched one that never fired as "skipped" (a
-  // clean fast-path skips match; eval_skipped skips the matcher LLM, etc.).
-  const lastDone = STAGE_ORDER.reduce((acc, k, i) => (seen.get(k)!.state === 'done' ? i : acc), -1);
-  STAGE_ORDER.forEach((k, i) => {
-    const st = seen.get(k)!;
+  const lastDone = STAGE_ORDER.reduce((acc, id, i) => (map.get(id)!.state === 'done' ? i : acc), -1);
+  STAGE_ORDER.forEach((id, i) => {
+    const st = map.get(id)!;
     if (st.state === 'pending' && i < lastDone) st.state = 'skipped';
     if (st.state === 'pending' && i === lastDone + 1) st.state = 'active';
   });
-
-  return { stages: STAGE_ORDER.map((k) => seen.get(k)!), trajectory };
+  return { stages: STAGE_ORDER.map((id) => map.get(id)!), trajectory };
 }
 
 export function FlowGraph({ events }: { events: PipelineEvent[] }) {
   const { stages, trajectory } = buildStages(events);
   if (events.length === 0) return null;
+  const maxCount = Math.max(...stages.map((s) => s.count), 1);
 
   return (
-    <div className="space-y-3 rounded-lg border border-line bg-white/40 px-3 py-3">
-      <ol className="flex items-stretch gap-1 overflow-x-auto">
-        {stages.map((s, i) => (
-          <li key={s.key} className="flex items-center gap-1">
-            <StageNode stage={s} />
-            {i < stages.length - 1 ? (
-              <span className={`h-px w-4 ${s.state === 'done' ? 'bg-accent/50' : 'bg-line'}`} />
-            ) : null}
-          </li>
-        ))}
-      </ol>
+    <div className="space-y-3 rounded-xl border border-line bg-paper px-3 py-3">
+      <div className="-mx-1 overflow-x-auto px-1">
+        <div className="flex items-start">
+          {stages.map((s, i) => (
+            <div key={s.id} className="contents">
+              <StageNode stage={s} maxCount={maxCount} />
+              {i < stages.length - 1 ? <Connector active={s.state === 'done'} /> : null}
+            </div>
+          ))}
+        </div>
+      </div>
       {trajectory.length > 0 ? (
-        <div className="flex items-center gap-3 border-t border-line pt-2 text-[11px]">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line pt-2 text-[11px]">
           <span className="font-mono uppercase tracking-wide text-muted">confidence</span>
           {trajectory.map((t, i) => (
             <span key={i} className="flex items-center gap-1">
-              {i > 0 ? <span className="text-muted/50">→</span> : null}
+              {i > 0 ? <span className="text-muted/40">→</span> : null}
               <span className="text-muted">{t.label}</span>
-              <span className="font-semibold tabular-nums text-ink">
+              <span
+                className="font-semibold tabular-nums"
+                style={{ color: ringForConf(t.confidence) }}
+              >
                 {Math.round(t.confidence * 100)}%
               </span>
             </span>
@@ -134,25 +166,79 @@ export function FlowGraph({ events }: { events: PipelineEvent[] }) {
   );
 }
 
-function StageNode({ stage }: { stage: Stage }) {
-  const tone =
-    stage.state === 'done'
-      ? 'border-accent/40 bg-accent-soft/40 text-ink'
-      : stage.state === 'active'
-        ? 'border-accent/40 bg-white text-ink animate-pulse'
-        : stage.state === 'skipped'
-          ? 'border-line bg-paper text-muted/60 line-through'
-          : 'border-line bg-paper text-muted';
+function StageNode({ stage, maxCount }: { stage: Stage; maxCount: number }) {
+  const active = stage.state === 'done' || stage.state === 'active';
+  const size = active ? sizeFor(Math.max(stage.count, 1), maxCount) : SIZE_MIN;
+  const ring =
+    stage.state === 'pending'
+      ? GRAY
+      : stage.id === 'ground'
+        ? stage.grounded === false
+          ? RED
+          : GREEN
+        : ringForConf(stage.confidence);
+  const dim = stage.state === 'pending' || stage.state === 'skipped';
+
   return (
-    <div className={`rounded-md border px-2 py-1 ${tone}`} title={stage.detail ?? stage.label}>
-      <div className="font-mono text-[10px] uppercase tracking-wide">{stage.label}</div>
-      {stage.confidence !== undefined ? (
-        <div className="text-[10px] tabular-nums text-accent">
-          {Math.round(stage.confidence * 100)}%
+    <div className="flex w-[84px] shrink-0 flex-col items-center gap-1.5">
+      <div className="flex items-center justify-center" style={{ height: BAND }}>
+        <div
+          className={`flex flex-col items-center justify-center rounded-full bg-paper shadow-sm transition-all ${
+            stage.state === 'active' ? 'animate-pulse' : ''
+          }`}
+          style={{
+            width: size,
+            height: size,
+            border: `2.5px solid ${ring}`,
+            opacity: dim ? 0.45 : 1,
+          }}
+          title={stage.detail || stage.label}
+        >
+          {stage.confidence !== undefined ? (
+            <span className="font-mono text-[12px] font-semibold tabular-nums leading-none text-ink">
+              {Math.round(stage.confidence * 100)}%
+            </span>
+          ) : stage.count > 0 ? (
+            <span className="font-mono text-[12px] tabular-nums leading-none text-ink">
+              {stage.count}
+            </span>
+          ) : (
+            <span className="leading-none text-muted" style={{ fontSize: 9 }}>
+              {stage.state === 'skipped' ? '–' : ''}
+            </span>
+          )}
         </div>
-      ) : stage.detail ? (
-        <div className="text-[9px] text-muted truncate max-w-[8rem]">{stage.detail}</div>
+      </div>
+      <span
+        className={`w-full truncate text-center text-[11px] font-medium leading-tight ${
+          dim ? 'text-muted' : 'text-ink'
+        }`}
+      >
+        {stage.label}
+      </span>
+      {stage.detail ? (
+        <span className="-mt-1 w-full truncate text-center text-[9px] leading-tight text-muted">
+          {stage.detail}
+        </span>
       ) : null}
+    </div>
+  );
+}
+
+function Connector({ active }: { active: boolean }) {
+  return (
+    <div className="flex shrink-0 items-center" style={{ height: BAND, width: 18 }}>
+      <svg width="18" height="10" aria-hidden>
+        <line
+          x1="0"
+          y1="5"
+          x2="18"
+          y2="5"
+          stroke={active ? GREEN : GRAY}
+          strokeWidth="1.5"
+          strokeDasharray={active ? '' : '2 2'}
+        />
+      </svg>
     </div>
   );
 }
@@ -161,8 +247,6 @@ function StageNode({ stage }: { stage: Stage }) {
 
 type Signal = { label: string; value: string; ok: boolean };
 
-/** The evidence behind the calibrated confidence — derived from the result the
- *  pipeline returned (flag, registry id, jurisdiction, enrichment coverage). */
 export function confidenceSignals(r: ExtractionResult, queryJurisdiction?: string): Signal[] {
   const s: Signal[] = [];
   const flag = r.confidence_flag ?? '';
@@ -186,11 +270,7 @@ export function confidenceSignals(r: ExtractionResult, queryJurisdiction?: strin
     const aligned =
       !!r.jurisdiction_confirmed &&
       country(r.jurisdiction_confirmed) === country(queryJurisdiction);
-    s.push({
-      label: 'Jurisdiction alignment',
-      value: r.jurisdiction_confirmed ?? '—',
-      ok: aligned,
-    });
+    s.push({ label: 'Jurisdiction alignment', value: r.jurisdiction_confirmed ?? '—', ok: aligned });
   }
   const tierA = ['registered_address', 'incorporation_date', 'organization_type', 'status'] as const;
   const filled = tierA.filter((k) => r[k]).length;

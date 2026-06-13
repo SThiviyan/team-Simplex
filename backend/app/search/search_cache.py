@@ -42,7 +42,20 @@ async def cached_search(provider: SearchProvider, name: str, limit: int) -> list
     if hit is not None and time.monotonic() - hit[0] < TTL_SECONDS:
         return hit[1]
 
+    # On a cold process (in-memory miss), try the on-disk cache: re-running the
+    # same query then skips the slow source (scrape, rate-limited GLEIF) entirely.
+    from app.config import settings
+    from app.search import persistent_cache
+
+    ns = f"provider:{provider.name}:{limit}"
+    disk = persistent_cache.get(ns, key[1], max_age=settings.search_cache_ttl_seconds)
+    if disk is not None:
+        results = [SearchResult(**r) for r in disk]
+        _cache[key] = (time.monotonic(), results)
+        return results
+
     results = await provider.search(name, limit=limit)  # exceptions propagate, uncached
     _cache[key] = (time.monotonic(), results)
     _prune()
+    persistent_cache.set(ns, key[1], [r.model_dump() for r in results])
     return results

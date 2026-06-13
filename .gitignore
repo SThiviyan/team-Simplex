@@ -26,3 +26,4 @@ backend/data/output/
 # Generated search output (openable in IDE)
 backend/search_results*.json
 backend/data/agent_events.db*
+backend/data/search_cache.db*
