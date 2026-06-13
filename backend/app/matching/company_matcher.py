@@ -145,7 +145,6 @@ class Candidate:
     record: dict[str, Any]
     name_score: float            # fuzzy name similarity, 0..1
     jurisdiction_match: bool     # did the jurisdiction agree?
-    prior_confidence: float      # the record's original confidence, 0..1
     confidence: float            # confidence after folding in the match, 0..1
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -230,11 +229,9 @@ def score_record(
         record.get(JURISDICTION_FIELD)
     ) == _normalize_jurisdiction(target.jurisdiction)
 
-    # The source's own confidence is read for display only — it does NOT feed
-    # the match confidence (the matching stages filter on name).
-    prior = record.get(CONFIDENCE_FIELD)
-    prior = float(prior) if isinstance(prior, (int, float)) else 0.0
-
+    # NOTE: the source's own gather-time confidence (a crude difflib name ratio)
+    # is deliberately NOT used or surfaced — it only sorted out otherwise-correct
+    # results. The matching stages filter and rank on the name match alone.
     confidence = update_confidence(
         name_score,
         jurisdiction_match,
@@ -245,7 +242,6 @@ def score_record(
         record=record,
         name_score=round(name_score, 4),
         jurisdiction_match=jurisdiction_match,
-        prior_confidence=round(prior, 4),
         confidence=confidence,
     )
 
@@ -329,6 +325,5 @@ def candidate_to_dict(candidate: Candidate) -> dict[str, Any]:
     out["_match"] = {
         "name_score": candidate.name_score,
         "jurisdiction_match": candidate.jurisdiction_match,
-        "prior_confidence": candidate.prior_confidence,
     }
     return out

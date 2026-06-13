@@ -14,6 +14,7 @@ class KrsPlSearchProvider(SearchProvider):
     name = "krs_pl"
     jurisdictions = {"PL"}
     enabled = True
+    lookup = "number"
 
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
         try:

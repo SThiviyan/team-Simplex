@@ -35,6 +35,7 @@ class GleifSearchProvider(SearchProvider):
     name = "gleif"
     # Keyless and LLM-free, so it is always available.
     enabled = True
+    tier = "global"
 
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
         try:

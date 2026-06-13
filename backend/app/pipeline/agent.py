@@ -6,6 +6,7 @@ no usable MCP is configured for the country, the agent falls back to a single
 web-search call. Structured JSON output is enforced via output_config.
 """
 
+import asyncio
 import logging
 
 import anthropic
@@ -170,11 +171,19 @@ async def run_layer1(query: QueryRow, mcps: list[McpServerEntry]) -> list[Extrac
     for mcp in attempts:
         via = f"mcp:{mcp.name}" if mcp else "web_search"
         try:
-            payload = await _attempt(client, query, mcp=mcp)
+            # Bound each attempt: a slow/hanging source is abandoned after the
+            # timeout so the agent gives up on it and moves to the next one.
+            payload = await asyncio.wait_for(
+                _attempt(client, query, mcp=mcp),
+                timeout=settings.pipeline_attempt_timeout,
+            )
         except Exception as exc:
-            # An MCP/tool failure must not kill the run — move down the list,
-            # same philosophy as FederatedSearch's non-fatal provider errors.
-            logger.exception("attempt failed for query %s (via %s)", query.query_id, via)
+            # An MCP/tool failure or timeout (asyncio.TimeoutError) must not kill
+            # the run — move down the list, same philosophy as FederatedSearch's
+            # non-fatal provider errors.
+            logger.warning(
+                "attempt failed for query %s (via %s): %s", query.query_id, via, type(exc).__name__
+            )
             errors.append(f"{via}: {type(exc).__name__}: {str(exc)[:120]}")
             continue
         if payload is None:

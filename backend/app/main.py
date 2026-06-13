@@ -25,9 +25,10 @@ async def lifespan(app: FastAPI):
     # jurisdiction-scoped so the resolver only calls the registers that matter.
     providers = all_providers()
     app.state.providers = providers
-    # /api/search stays on the fast global sources.
+    # /api/search stays on the fast, FREE global sources (premium Apify sources
+    # like OpenCorporates are opt-in and must not fire on every quick search).
     app.state.search = FederatedSearch(
-        providers=[p for p in providers if p.jurisdictions is None]
+        providers=[p for p in providers if p.jurisdictions is None and p.cost == "free"]
     )
     # /api/resolve does jurisdiction-aware gather + cross-reference.
     app.state.resolver = CompanyResolver(providers)

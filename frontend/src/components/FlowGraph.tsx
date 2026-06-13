@@ -113,14 +113,14 @@ function stageDetail(
     }
     case 'fetch': {
       const items = [...cands]
-        .sort((a, b) => (b._match?.prior_confidence ?? 0) - (a._match?.prior_confidence ?? 0))
-        .map((c) => asItem(c, c._match?.prior_confidence));
+        .sort((a, b) => (b._match?.name_score ?? 0) - (a._match?.name_score ?? 0))
+        .map((c) => asItem(c, c._match?.name_score));
       return {
         title: 'Top fetched records',
         note:
           query && query.count > cands.length
-            ? `Top ${cands.length} of ${query.count} gathered records, ranked by source confidence.`
-            : 'Ranked by the confidence the source reported at gather time.',
+            ? `Top ${cands.length} of ${query.count} gathered records, ranked by name match.`
+            : 'Records gathered from the registers, ranked by name match.',
         items,
       };
     }

@@ -1,5 +1,7 @@
 """Tests for best-effort US state-registry scraping (MCP scrape entries)."""
 
+import asyncio
+
 import app.pipeline.agent as agent
 from app.pipeline.mcp_registry import get_mcp_servers
 from app.pipeline.models import ExtractionPayload, McpServerEntry, QueryRow
@@ -85,6 +87,29 @@ async def test_walk_stops_early_on_confident_state(monkeypatch):
     # Stopped after the confident state — the remaining states were not scraped.
     assert calls == [states[0].name, states[1].name]
     assert any(r.confidence >= 0.95 for r in results)
+
+
+async def test_slow_attempt_times_out_and_continues(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setattr(agent.settings, "pipeline_mock", False)
+    monkeypatch.setattr(agent.settings, "pipeline_attempt_timeout", 0.02)
+    states = get_mcp_servers("US")[:2]
+    calls: list[str] = []
+
+    async def slow(client, query, *, mcp):
+        calls.append(mcp.name)
+        await asyncio.sleep(5)  # far exceeds the 0.02s per-attempt timeout
+        return _payload(query.name, 0.95)
+
+    monkeypatch.setattr(agent, "_attempt", slow)
+    results = await agent.run_layer1(QueryRow(query_id="q1", name="X", jurisdiction="US"), states)
+
+    # Each state was attempted but abandoned on timeout, so the walk continued and
+    # ultimately reports a layer-1 error rather than hanging.
+    assert calls == [s.name for s in states]
+    assert len(results) == 1
+    assert results[0].no_match_reason.startswith(agent.LAYER1_ERROR_PREFIX)
+    assert "TimeoutError" in results[0].no_match_reason
 
 
 async def test_all_states_failing_yields_layer1_error(monkeypatch):

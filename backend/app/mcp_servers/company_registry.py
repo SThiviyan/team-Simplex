@@ -1,22 +1,26 @@
 """Unified company-registry MCP server.
 
-A single MCP server that fronts every data source (GLEIF, Wikidata, and the
-national registers DE/NO/FR/DK/IE/US/FI). It can query all of them at once with
-jurisdiction-aware routing, or hit a single source directly.
+A single MCP server fronting every data source — global identifiers (GLEIF,
+Wikidata, OpenCorporates), national registers (DE/GB/FR/ES/NL/US/JP/BR/PL/…), and
+premium Apify-actor sources. With this many APIs, the tools route by jurisdiction
+and cost so a caller picks the right calls instead of fanning out to everything.
 
 Run as a stdio MCP server:  python -m app.mcp_servers.company_registry
 
 Tools:
-  - search_companies:  search all relevant registers; if a jurisdiction is
-                       given, only sources that can match it are queried and
-                       results are filtered to that jurisdiction.
-  - search_one_source: query a single named source's API directly.
-  - list_sources:      list available sources and the jurisdictions they cover.
+  - recommend_sources: given a jurisdiction, which sources to call and in what
+                       order (free official registers first, premium last).
+  - search_companies:  search the relevant sources for a jurisdiction (free
+                       sources by default; set include_premium=True to add the
+                       paid Apify ones).
+  - search_one_source: query a single named source directly.
+  - list_sources:      every source with its jurisdiction + routing metadata.
 """
 
 from mcp.server.fastmcp import FastMCP
 
 from app.search.csv_search import search_jurisdiction
+from app.search.routing import describe, has_identifier, rank_providers
 from app.search.sources import all_providers
 
 mcp = FastMCP("company-registry")
@@ -27,38 +31,83 @@ _BY_NAME = {p.name: p for p in _PROVIDERS}
 
 
 @mcp.tool()
-async def search_companies(name: str, jurisdiction: str | None = None, limit: int = 10) -> dict:
-    """Search company registers by name across all relevant sources.
+def recommend_sources(
+    jurisdiction: str | None = None, has_registration_number: bool = False
+) -> dict:
+    """Recommend which sources to call for a jurisdiction, best-first.
+
+    Helps choose the right calls from the large catalog. Returns the relevant
+    sources ranked (free official registers first, then global, then premium
+    paid sources), split into ``free`` and ``premium``. Number-only sources
+    (CNPJ/KRS/VAT lookups) are included only when ``has_registration_number`` is
+    true, since they cannot match a plain name.
 
     Args:
-        name: Company name to search for.
-        jurisdiction: Optional ISO 3166-1 alpha-2 code (e.g. "DE", "US", "FI").
-            When given, only sources that can match it are queried and results
-            are filtered to that jurisdiction; otherwise every source is queried.
-        limit: Max results per source.
-
-    Returns `{sources_called, sources_skipped, results}` — the results being a
-    merged, jurisdiction-filtered list of company records.
+        jurisdiction: ISO 3166-1 alpha-2 code (e.g. "DE", "US", "FR"); None = any.
+        has_registration_number: set true if the query carries an official
+            registration / VAT / CNPJ / KRS number.
     """
-    results, called, skipped = await search_jurisdiction(_PROVIDERS, name, jurisdiction, limit)
+    ranked = rank_providers(
+        _PROVIDERS, jurisdiction, include_premium=True, identifier_present=has_registration_number
+    )
+    free = [describe(p) for p in ranked if p.cost == "free"]
+    premium = [describe(p) for p in ranked if p.cost == "premium"]
+    return {
+        "jurisdiction": jurisdiction,
+        "ranked": [describe(p) for p in ranked],
+        "free": free,
+        "premium": premium,
+        "note": (
+            "Call the free sources first. Premium (Apify) sources are paid and "
+            "opt-in (require APIFY_ENABLED); use them only when free sources are "
+            "insufficient."
+        ),
+    }
+
+
+@mcp.tool()
+async def search_companies(
+    name: str,
+    jurisdiction: str | None = None,
+    limit: int = 10,
+    include_premium: bool = False,
+) -> dict:
+    """Search company registers by name across the relevant sources.
+
+    Routes by jurisdiction and cost: only sources that can match the jurisdiction
+    are queried, free ones by default. Set ``include_premium=True`` to also query
+    the paid Apify-backed sources. Results are merged and jurisdiction-filtered.
+
+    Args:
+        name: Company name (or a name carrying a registration number).
+        jurisdiction: Optional ISO 3166-1 alpha-2 code; when given, only matching
+            sources are queried and results are filtered to it.
+        limit: Max results per source.
+        include_premium: Include paid Apify sources (NorthData, OpenCorporates, …).
+
+    Returns `{sources_called, sources_skipped, routing, results}`.
+    """
+    selected = rank_providers(
+        _PROVIDERS,
+        jurisdiction,
+        include_premium=include_premium,
+        identifier_present=has_identifier(name),
+    )
+    results, called, skipped = await search_jurisdiction(selected, name, jurisdiction, limit)
     return {
         "sources_called": called,
         "sources_skipped": skipped,
+        "routing": {
+            "include_premium": include_premium,
+            "selected": [p.name for p in selected],
+        },
         "results": [r.model_dump() for r in results],
     }
 
 
 @mcp.tool()
 async def search_one_source(source: str, name: str, limit: int = 10) -> list[dict]:
-    """Query one source's API directly by name.
-
-    Args:
-        source: Source id — one of: gleif, wikidata, handelsregister,
-            companies_house, brreg, annuaire, cvr, cro, sec, prh, ares,
-            ariregister, rpo, orgbook, rasham, rsk, kvk.
-        name: Company name to search for.
-        limit: Max results.
-    """
+    """Query one source's API directly by name. Use `list_sources` for source ids."""
     provider = _BY_NAME.get(source)
     if provider is None:
         return []
@@ -70,18 +119,13 @@ async def search_one_source(source: str, name: str, limit: int = 10) -> list[dic
 
 @mcp.tool()
 def list_sources() -> list[dict]:
-    """List the available sources and the jurisdictions each covers.
+    """List every source with its jurisdictions and routing metadata.
 
-    `jurisdictions` is null for global sources (always relevant) or a list of
-    ISO 3166-1 alpha-2 codes for jurisdiction-scoped registers.
+    Each entry: `{name, jurisdictions, tier, cost, lookup}` — `jurisdictions` is
+    null for global sources; `cost` is "free" or "premium" (paid Apify); `lookup`
+    is "name" (name search) or "number" (id/number lookup only).
     """
-    return [
-        {
-            "name": p.name,
-            "jurisdictions": sorted(p.jurisdictions) if p.jurisdictions else None,
-        }
-        for p in _PROVIDERS
-    ]
+    return [describe(p) for p in _PROVIDERS]
 
 
 if __name__ == "__main__":

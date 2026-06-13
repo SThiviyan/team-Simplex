@@ -14,6 +14,7 @@ class BrasilSearchProvider(SearchProvider):
     name = "brasil_cnpj"
     jurisdictions = {"BR"}
     enabled = True
+    lookup = "number"
 
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
         try:

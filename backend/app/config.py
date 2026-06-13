@@ -66,6 +66,21 @@ class Settings(BaseSettings):
         default=None, description="gBizINFO API token (sent as x-hojinInfo-api-token)"
     )
 
+    # --- Apify (actor-backed enrichment sources) --------------------------
+    # Optional. An Apify API token enables actor-backed providers (e.g. the
+    # Poland KRS rich-data scraper). Without it those providers self-disable.
+    apify_api_key: str | None = Field(
+        default=None, description="Apify API token (read from APIFY_API_KEY)"
+    )
+    # Global switch for ALL Apify-backed providers (NorthData, KRS, …). They run
+    # paid actors (some ~20s), so they are opt-in even when a token is present:
+    # every Apify provider requires apify_api_key AND apify_enabled. When using
+    # the slower ones (NorthData) also raise PROVIDER_TIMEOUT (~30).
+    apify_enabled: bool = Field(
+        default=False,
+        description="Enable all Apify-backed providers (read from APIFY_ENABLED)",
+    )
+
     # --- Pipeline (registry-lookup agent chain) ---
     # The Anthropic SDK reads ANTHROPIC_API_KEY from os.environ. We also surface
     # it here so a key supplied via `.env` (pydantic) is honoured — see the
@@ -90,6 +105,12 @@ class Settings(BaseSettings):
     pipeline_concurrency: int = Field(
         default=4,
         description="How many query rows are processed in parallel during a batch run",
+    )
+    pipeline_attempt_timeout: float = Field(
+        default=40.0,
+        description="Per-attempt wall-clock timeout (seconds) for one MCP/scrape/web "
+        "lookup in the Layer-1 agent; a slower source is abandoned and the agent "
+        "moves to the next one (best-effort).",
     )
 
 

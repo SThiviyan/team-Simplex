@@ -76,14 +76,6 @@ export function confidenceSignals(rec: CompanyRecord): Signal[] {
       hint: 'When the source last updated this record.',
     });
   }
-  if (m && typeof m.prior_confidence === 'number') {
-    s.push({
-      label: 'Source confidence',
-      value: `${Math.round(m.prior_confidence * 100)}%`,
-      ok: m.prior_confidence >= 0.5,
-      hint: 'Confidence the gather layer reported before fuzzy re-scoring.',
-    });
-  }
   // --- Corroboration / "fame" from the graph-consolidation layer ----------
   const providerCount = m?.provider_count ?? rec._provider_count;
   if (typeof providerCount === 'number' && providerCount > 1) {

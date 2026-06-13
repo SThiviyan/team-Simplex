@@ -65,6 +65,16 @@ class SearchProvider(ABC):
     # the requested jurisdiction is Hungary.
     jurisdictions: set[str] | None = None
 
+    # --- Routing metadata (jurisdiction/cost-aware source selection) -------
+    # tier:   "register" official national register | "global" cross-border
+    #         identifier/aggregator | "enrichment" augments a known entity.
+    # cost:   "free" keyless/included | "premium" metered (e.g. Apify actors).
+    # lookup: "name" supports name search | "number" resolves by id/number only
+    #         (only useful when the query carries that identifier).
+    tier: str = "register"
+    cost: str = "free"
+    lookup: str = "name"
+
     @abstractmethod
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
         ...

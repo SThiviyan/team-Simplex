@@ -3,7 +3,6 @@
 export type MatchDiagnostics = {
   name_score: number; // fuzzy name similarity, 0..1
   jurisdiction_match: boolean;
-  prior_confidence: number; // confidence from the gather layer, pre re-scoring
   // Corroboration / "fame" from the graph-consolidation layer (Layer 0): how
   // many distinct sources agreed on this entity and how much that lifted its
   // confidence. Present once consolidation + fame-boost have run.
