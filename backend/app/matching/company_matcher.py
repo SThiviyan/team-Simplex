@@ -35,15 +35,23 @@ from typing import Any, Callable, Iterable
 
 from rapidfuzz import fuzz, utils
 
+from app.matching.token_weights import (
+    token_weights,
+    weighted_containment_score,
+    weighted_token_score,
+)
+
 # Field names in the source records. Kept here so a different schema only
 # needs editing in one place.
 NAME_FIELD = "name_normalized_register_name"
 JURISDICTION_FIELD = "jurisdiction_confirmed"
 CONFIDENCE_FIELD = "confidence"
 
-# Default scorer: token_sort_ratio is robust to word order ("Sinpex GmbH"
-# vs "GmbH Sinpex") and to extra tokens, which is what registry names need.
-DEFAULT_SCORER: Callable[..., float] = fuzz.token_sort_ratio
+# Default scorer: WRatio (RapidFuzz's adaptive scorer) handles subset/extra
+# tokens and partial overlaps better than a single ratio — the FuzzyAI choice.
+# The legal-form-stripped comparison and the Fellegi-Sunter weighted token score
+# (token_weights.py) complement it in score_record.
+DEFAULT_SCORER: Callable[..., float] = fuzz.WRatio
 
 # ---------------------------------------------------------------------------
 # Legal-form suffix stripping (multi-country).
@@ -155,34 +163,23 @@ def _normalize_jurisdiction(value: str | None) -> str:
 
 
 def update_confidence(
-    prior_confidence: float,
     name_score: float,
     jurisdiction_match: bool,
     *,
-    prior_weight: float = 0.4,
     jurisdiction_penalty: float = 0.5,
 ) -> float:
-    """Re-derive a confidence value from the prior confidence and the match.
+    """Confidence from the NAME match alone.
 
-    The result blends two independent pieces of evidence:
-
-    * ``prior_confidence`` — what the source already believed (0..1).
-    * ``name_score``       — how well the name matched the target (0..1).
-
-    They are combined as a weighted average controlled by ``prior_weight``
-    (the share given to the prior; the name score gets the rest). A
-    jurisdiction mismatch then multiplies the result by
-    ``jurisdiction_penalty`` rather than discarding the row outright, so a
-    strong name match in the "wrong" jurisdiction is demoted but still
-    surfaceable.
-
-    The output is clamped to ``[0.0, 1.0]``.
+    The gather layer attaches its own ``confidence`` (a crude difflib name
+    ratio), but the matching stages deliberately IGNORE it — we filter and rank
+    on the name match only. A jurisdiction mismatch then multiplies the result by
+    ``jurisdiction_penalty`` (demote, don't drop) rather than counting against
+    the name. The output is clamped to ``[0.0, 1.0]``.
     """
-    prior_weight = min(max(prior_weight, 0.0), 1.0)
-    blended = prior_weight * prior_confidence + (1.0 - prior_weight) * name_score
+    conf = name_score
     if not jurisdiction_match:
-        blended *= jurisdiction_penalty
-    return round(min(max(blended, 0.0), 1.0), 4)
+        conf *= jurisdiction_penalty
+    return round(min(max(conf, 0.0), 1.0), 4)
 
 
 def score_record(
@@ -190,10 +187,16 @@ def score_record(
     target: Target,
     *,
     scorer: Callable[..., float] = DEFAULT_SCORER,
-    prior_weight: float = 0.4,
     jurisdiction_penalty: float = 0.5,
+    tf_weights: dict[str, float] | None = None,
 ) -> Candidate:
-    """Score a single record against the target and build a Candidate."""
+    """Score a single record against the target and build a Candidate.
+
+    ``tf_weights`` are the Fellegi-Sunter inverse-frequency token weights over
+    the candidate set (from :func:`find_candidates`); when given, the weighted
+    token score is folded into the name score so a discriminative core name
+    outweighs legal-form / generic filler.
+    """
     raw_name = record.get(NAME_FIELD)
     # RapidFuzz scorers return 0..100; normalize to 0..1. A missing/empty
     # name scores 0 (it can never match), which the gross filter will drop.
@@ -210,7 +213,16 @@ def score_record(
         core_score = (
             scorer(core_target, core_name) / 100.0 if core_target and core_name else 0.0
         )
-        name_score = max(raw_score, core_score)
+        weights = tf_weights if tf_weights is not None else {}
+        # Fellegi-Sunter weighted token score (Splink technique): rewards
+        # agreement on rare, identifying tokens; near-ignores generic ones.
+        tf_score = weighted_token_score(target.name, raw_name, weights)
+        # Containment: reward the query being *contained* in the candidate
+        # without penalising extra text ("Nestle" -> "Nestle S.A."). This is the
+        # recall-oriented signal the user asked for; precision is handled by the
+        # fame boost and the LLM re-rank downstream.
+        contain_score = weighted_containment_score(target.name, raw_name, weights)
+        name_score = max(raw_score, core_score, tf_score, contain_score)
     else:
         name_score = 0.0
 
@@ -218,14 +230,14 @@ def score_record(
         record.get(JURISDICTION_FIELD)
     ) == _normalize_jurisdiction(target.jurisdiction)
 
+    # The source's own confidence is read for display only — it does NOT feed
+    # the match confidence (the matching stages filter on name).
     prior = record.get(CONFIDENCE_FIELD)
     prior = float(prior) if isinstance(prior, (int, float)) else 0.0
 
     confidence = update_confidence(
-        prior,
         name_score,
         jurisdiction_match,
-        prior_weight=prior_weight,
         jurisdiction_penalty=jurisdiction_penalty,
     )
 
@@ -246,7 +258,6 @@ def find_candidates(
     score_cutoff: float = 0.6,
     require_jurisdiction: bool = False,
     scorer: Callable[..., float] = DEFAULT_SCORER,
-    prior_weight: float = 0.4,
     jurisdiction_penalty: float = 0.5,
 ) -> list[Candidate]:
     """Gross-filter, rank, and return the top candidates for ``target``.
@@ -271,21 +282,25 @@ def find_candidates(
     scorer:
         Any RapidFuzz scorer (``fuzz.ratio``, ``fuzz.WRatio``,
         ``fuzz.token_sort_ratio`` …). Returns 0..100.
-    prior_weight / jurisdiction_penalty:
-        Passed through to :func:`update_confidence`.
+    jurisdiction_penalty:
+        Passed through to :func:`update_confidence` (jurisdiction-mismatch demote).
 
     Returns
     -------
     list[Candidate]
-        Sorted by updated confidence (desc), then raw name score (desc).
+        Sorted by name-based confidence (desc), then raw name score (desc).
     """
+    companies = list(companies)
+    # Fellegi-Sunter token weights computed over the whole candidate set + the
+    # query, so token rarity is judged in context.
+    tf_weights = token_weights([c.get(NAME_FIELD) or "" for c in companies] + [target.name])
     scored = [
         score_record(
             record,
             target,
             scorer=scorer,
-            prior_weight=prior_weight,
             jurisdiction_penalty=jurisdiction_penalty,
+            tf_weights=tf_weights,
         )
         for record in companies
     ]

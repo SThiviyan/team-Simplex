@@ -21,6 +21,9 @@ dependencies = [
     "python-multipart>=0.0.9",
     # Matching layer (app/matching/*): RapidFuzz gross filter before the LLM.
     "rapidfuzz>=3.0",
+    # networkx: graph connected-components for the FuzzyAI-style duplicate
+    # consolidation in app/matching/corroboration.py.
+    "networkx>=3.0",
 ]
 
 [dependency-groups]

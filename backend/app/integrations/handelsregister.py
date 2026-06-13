@@ -180,4 +180,13 @@ async def search_companies(
                 "handelsregister.ai API not working (%s); falling back to the website scraper",
                 exc,
             )
+    # The browser scrape is ~50s/query and usually empty — only run it when
+    # explicitly opted in (settings.handelsregister_scrape_fallback).
+    from app.config import settings
+
+    if not settings.handelsregister_scrape_fallback:
+        logger.info(
+            "handelsregister: no API key and scrape fallback disabled; returning no results"
+        )
+        return []
     return await asyncio.to_thread(_scrape_search, name, limit)

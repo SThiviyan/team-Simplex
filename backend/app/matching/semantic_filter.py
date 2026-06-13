@@ -96,6 +96,16 @@ Apply reasoning that pure string matching cannot:
      - 0.40-0.69: plausible but genuinely ambiguous.
      - 0.00-0.39: weak; likely not a real match.
 
+   FAME / TIE-BREAKING. Each candidate has a `fame` count (`provider_count`
+   distinct sources, `fame` total mentions) — how many independent registers
+   returned it. When two or more candidates are otherwise comparable name
+   matches, PREFER the one with higher fame: a company corroborated by many
+   sources is far more likely the mainstream entity the user meant — especially
+   when the query is a short/common name (e.g. "siemens") and the high-fame
+   candidate is the full legal name ("Siemens Aktiengesellschaft"). Break any
+   remaining tie by `completeness`. Never let fame override a clearly better name
+   or jurisdiction match.
+
 5. RECURSIVE TRIGGERING. If NONE of the candidates is the right entity, STRONGLY
    prefer "recursive_search" over "no_match": whenever you can think of a more
    promising query — an expanded acronym, the native-language registered name, a
@@ -167,10 +177,98 @@ EVALUATION_TOOL: dict[str, Any] = {
                     "the registry with (e.g. 'Bayerische Motoren Werke AG'). Empty otherwise."
                 ),
             },
+            "deciding_references": {
+                "type": "array",
+                "description": (
+                    "Only for the web-search tie-break: the specific authoritative "
+                    "references (Wikipedia, official site, business register, VAT/LEI "
+                    "lookup, news) that established which candidate is correct. Cite the "
+                    "concrete evidence — VAT/USt-IdNr, registration number, registry "
+                    "court, LEI — that decided it. Empty when no web research was done."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "description": "Source URL."},
+                        "title": {
+                            "type": "string",
+                            "description": (
+                                "Short label, e.g. 'Handelsregister', 'Wikipedia', "
+                                "'VAT lookup', 'GLEIF/LEI', 'Official site'."
+                            ),
+                        },
+                        "detail": {
+                            "type": "string",
+                            "description": (
+                                "The deciding fact this source proves, e.g. 'VAT "
+                                "DE811907980 / HRB 6684 matches candidate [1]'."
+                            ),
+                        },
+                    },
+                    "required": ["url"],
+                },
+            },
         },
         "required": ["decision", "winning_candidate_index", "confidence", "reasoning"],
     },
 }
+
+
+# Anthropic server-side web search — enabled only for the tie-break disambiguation
+# pass (executed by the API, not by us).
+WEB_SEARCH_TOOL: dict[str, Any] = {
+    "type": "web_search_20260209",
+    "name": "web_search",
+    "max_uses": 5,
+}
+
+# The server-side web-search loop can return stop_reason="pause_turn" to continue
+# searching; we resume up to this many times before giving up on the tie-break.
+MAX_PAUSE_TURN_CONTINUATIONS = 5
+
+# A tie = several candidates at near-identical (≈100%) confidence that the
+# deterministic layers (name + fame) could not separate.
+_TIE_HIGH = 0.97
+_TIE_EPS = 0.02
+
+
+def _is_tie(fuzz_candidates: list[dict[str, Any]]) -> bool:
+    """True when ≥2 candidates sit at the top within _TIE_EPS and ≥ _TIE_HIGH."""
+    confs = sorted(
+        (float(c.get(CONFIDENCE_FIELD) or 0.0) for c in fuzz_candidates), reverse=True
+    )
+    if len(confs) < 2:
+        return False
+    return confs[0] >= _TIE_HIGH and (confs[0] - confs[1]) <= _TIE_EPS
+
+
+def _build_disambiguation_content(
+    user_query: str, target_jurisdiction: str, fuzz_candidates: list[dict[str, Any]]
+) -> str:
+    """The tie-break prompt: same candidates, plus a directive to web-research."""
+    base = _build_user_content(user_query, target_jurisdiction, fuzz_candidates)
+    directive = (
+        "\n\nDISAMBIGUATION REQUIRED — several candidates are tied (all ~100% name "
+        "matches) and the deterministic layers could not separate them. "
+        "You MUST use the web_search tool (general web / Google) to establish which "
+        "one the user means. Research, in order of authority:\n"
+        "  1. Wikipedia and the company's official website — which legal entity is "
+        "the well-known / primary one for this name in the jurisdiction.\n"
+        "  2. The official business register and the VAT identifier (e.g. USt-IdNr / "
+        "VAT number) or LEI — confirm the registration number, registry court and "
+        "registered address of the intended entity.\n"
+        "  3. News / sector context that distinguishes same-named companies.\n"
+        "Search concrete terms such as the company name + jurisdiction + 'VAT' / "
+        "'Handelsregister' / 'registration number' / 'LEI'. Then pick the matching "
+        "candidate and call submit_evaluation exactly once. You MUST:\n"
+        "  - cite in `reasoning` the single piece of evidence (VAT / registration "
+        "number) that decided it, and\n"
+        "  - populate `deciding_references` with the authoritative sources you used "
+        "(URL + a short title + the deciding fact each one proves).\n"
+        "If your research shows the correct entity is NOT among the candidates, use "
+        "recursive_search."
+    )
+    return base + directive
 
 
 def _build_user_content(
@@ -193,9 +291,13 @@ def _build_user_content(
         name = cand.get(NAME_FIELD)
         juris = cand.get(JURISDICTION_FIELD)
         conf = cand.get(CONFIDENCE_FIELD)
+        fame = cand.get("_fame", 1)
+        providers = cand.get("_provider_count", 1)
+        completeness = cand.get("_completeness", 0.0)
         lines.append(
             f"  [{i}] name={name!r} jurisdiction={juris!r} "
-            f"fuzzy_confidence={conf!r}"
+            f"confidence={conf!r} fame={fame} provider_count={providers} "
+            f"completeness={completeness}"
         )
         lines.append(f"      full_record={json.dumps(cand, ensure_ascii=False)}")
     lines.append("")
@@ -234,8 +336,76 @@ def _extract_tool_input(message: anthropic.types.Message) -> dict[str, Any]:
     )
 
 
+def _citations_from_blocks(blocks: list[Any]) -> list[dict[str, Any]]:
+    """Pull the URLs Claude actually consulted out of response content blocks.
+
+    Reads both the server-side ``web_search_tool_result`` blocks (the pages the
+    search returned) and any ``citations`` attached to answer text. Errors and
+    malformed blocks are skipped. Accepts a flat list of blocks so it can span
+    several ``pause_turn`` continuations. Returns ``[{url, title, detail}, …]``
+    deduped by URL — the references the model had in front of it when deciding.
+    """
+    refs: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _add(url: Any, title: Any, detail: Any) -> None:
+        if not isinstance(url, str) or not url or url in seen:
+            return
+        seen.add(url)
+        refs.append({"url": url, "title": (title if isinstance(title, str) and title else url), "detail": detail if isinstance(detail, str) else None})
+
+    for block in blocks or []:
+        btype = getattr(block, "type", None)
+        if btype == "web_search_tool_result":
+            content = getattr(block, "content", None)
+            # On a search error this is an error object, not a list — skip it.
+            if isinstance(content, list):
+                for item in content:
+                    _add(getattr(item, "url", None), getattr(item, "title", None), None)
+        elif btype == "text":
+            for cit in getattr(block, "citations", None) or []:
+                _add(getattr(cit, "url", None), getattr(cit, "title", None), getattr(cit, "cited_text", None))
+    return refs
+
+
+def _extract_web_citations(message: anthropic.types.Message) -> list[dict[str, Any]]:
+    """Convenience wrapper: citations from a single message's content blocks."""
+    return _citations_from_blocks(list(getattr(message, "content", None) or []))
+
+
+def _merge_references(
+    model_refs: Any, consulted_refs: list[dict[str, Any]] | None, *, cap: int = 10
+) -> list[dict[str, Any]]:
+    """Combine the model's explicit deciding references with the consulted URLs.
+
+    The model's ``deciding_references`` (it picked these as the evidence that
+    settled the tie) come first and keep their ``detail``; any remaining pages
+    the search actually surfaced are appended so the trail is auditable. Deduped
+    by URL, capped at ``cap``.
+    """
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _add(url: Any, title: Any, detail: Any) -> None:
+        if not isinstance(url, str) or not url or url in seen:
+            return
+        seen.add(url)
+        out.append({"url": url, "title": (title if isinstance(title, str) and title else url), "detail": detail if isinstance(detail, str) and detail else None})
+
+    for r in model_refs or []:
+        if isinstance(r, dict):
+            _add(r.get("url"), r.get("title"), r.get("detail"))
+    for r in consulted_refs or []:
+        if isinstance(r, dict):
+            _add(r.get("url"), r.get("title"), r.get("detail"))
+    return out[:cap]
+
+
 def _assemble_result(
-    tool_input: dict[str, Any], fuzz_candidates: list[dict[str, Any]]
+    tool_input: dict[str, Any],
+    fuzz_candidates: list[dict[str, Any]],
+    *,
+    consulted_references: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Map the validated tool input onto the final result (pure, no I/O).
 
@@ -267,6 +437,11 @@ def _assemble_result(
         "confidence": confidence,
         "reasoning": reasoning,
         "recursive_search": None,
+        # The authoritative sources that decided a tie (VAT, register, Wikipedia,
+        # LEI, …). Empty on the normal path where no web research was needed.
+        "references": _merge_references(
+            tool_input.get("deciding_references"), consulted_references
+        ),
     }
 
     if decision == DECISION_MATCH:
@@ -299,6 +474,7 @@ def _empty_result(reasoning: str) -> dict[str, Any]:
         "confidence": 0.0,
         "reasoning": reasoning,
         "recursive_search": None,
+        "references": [],
     }
 
 
@@ -319,7 +495,71 @@ def _mock_result(fuzz_candidates: list[dict[str, Any]]) -> dict[str, Any]:
         "confidence": round(min(max(confidence, 0.0), 1.0), 4),
         "reasoning": "Mock mode: selected the top RapidFuzz candidate without calling the LLM.",
         "recursive_search": None,
+        "references": [],
     }
+
+
+def _try_web_disambiguation(
+    client: anthropic.Anthropic,
+    user_query: str,
+    target_jurisdiction: str,
+    fuzz_candidates: list[dict[str, Any]],
+    model: str,
+    max_tokens: int,
+    timeout: float,
+) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    """Resolve a tie by letting Claude web-search (Wikipedia, registry, VAT, LEI).
+
+    Returns ``(submit_evaluation tool input, consulted references)``, or ``None``
+    on any failure (web search not enabled on the key, no tool call returned, API
+    error) so the caller can fall back to the standard forced evaluation. The
+    consulted references are the URLs the search surfaced, so the deciding
+    evidence can be linked back in the final result.
+    """
+    content = _build_disambiguation_content(user_query, target_jurisdiction, fuzz_candidates)
+    # Server-side web search needs headroom: it pauses (pause_turn) to run each
+    # query, so allow a longer timeout than the plain forced eval.
+    client = client.with_options(timeout=max(timeout, 120.0))
+    messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
+    # Accumulate content blocks across pause_turn continuations so we can pull
+    # citations from every search turn, not just the final one.
+    collected_blocks: list[Any] = []
+    message: anthropic.types.Message | None = None
+    try:
+        for _ in range(MAX_PAUSE_TURN_CONTINUATIONS):
+            message = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=SYSTEM_PROMPT,
+                # Both tools, choice 'auto': the model web-searches (server-side)
+                # and then calls submit_evaluation. Forcing the eval tool would
+                # block the search, so we instruct-and-extract instead.
+                tools=[WEB_SEARCH_TOOL, EVALUATION_TOOL],
+                tool_choice={"type": "auto"},
+                messages=messages,
+            )
+            collected_blocks.extend(getattr(message, "content", None) or [])
+            if message.stop_reason == "pause_turn":
+                # Web-search loop paused — append the turn and resume it.
+                messages = messages[:1] + [
+                    {"role": "assistant", "content": message.content}
+                ]
+                continue
+            break
+        else:
+            logger.warning(
+                "web-search disambiguation exceeded pause_turn budget; using standard eval"
+            )
+            return None
+    except anthropic.APIError as exc:
+        logger.warning("web-search disambiguation unavailable (%s); using standard eval", exc)
+        return None
+    try:
+        tool_input = _extract_tool_input(message)
+    except SemanticFilterError as exc:
+        logger.warning("web-search disambiguation produced no evaluation (%s)", exc)
+        return None
+    return tool_input, _citations_from_blocks(collected_blocks)
 
 
 def semantic_filter(
@@ -375,6 +615,24 @@ def semantic_filter(
 
     if client is None:
         client = anthropic.Anthropic()
+
+    # Tie-break with web research: when several candidates are ~100% matches that
+    # name + fame could not separate, let Claude search the web (Wikipedia,
+    # official site, registry, VAT number / LEI) to establish the correct one.
+    # Any failure (web search unavailable, no tool call) falls back to the plain
+    # forced evaluation below.
+    if _is_tie(fuzz_candidates):
+        tie = _try_web_disambiguation(
+            client, user_query, target_jurisdiction, fuzz_candidates, model, max_tokens, timeout
+        )
+        if tie is not None:
+            tie_input, tie_refs = tie
+            logger.info(
+                "tie resolved via web-search disambiguation (%d references)", len(tie_refs)
+            )
+            return _assemble_result(
+                tie_input, fuzz_candidates, consulted_references=tie_refs
+            )
 
     user_content = _build_user_content(
         user_query, target_jurisdiction, fuzz_candidates
