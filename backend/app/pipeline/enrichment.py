@@ -21,6 +21,7 @@ confidence caps) and echoes the jurisdiction in the caller's convention
 (UK question -> UK answer, GB -> GB).
 """
 
+import asyncio
 import logging
 import re
 from functools import cache
@@ -447,15 +448,42 @@ async def _cross_reference(
 
     Also returns the raw Wikidata details so pass 2.5 (Impressum) can reuse
     the official website / Wikipedia article without a second lookup."""
-    details: dict = {}
     qid = next((r["metadata"].get("qid") for r in matched if r.get("metadata", {}).get("qid")), None)
-    if qid:
+    lei = next((r["metadata"].get("lei") for r in matched if r.get("metadata", {}).get("lei")), None)
+
+    # Wikidata (qid) and GLEIF (lei) are independent lookups that read only the
+    # matched records' metadata — fetch them CONCURRENTLY instead of one after
+    # the other. GLEIF only ever fills gaps Wikidata leaves, so it is only worth
+    # fetching while fields are still missing (computed on the incoming result;
+    # if Wikidata then fills everything, GLEIF's updates below are simply empty).
+    want_gleif = bool(lei and _missing_fields(result))
+
+    async def _wikidata_details() -> dict:
+        if not qid:
+            return {}
         try:
             from app.integrations import wikidata
 
-            details = await wikidata.entity_details(qid)
+            return await wikidata.entity_details(qid)
         except Exception:
-            details = {}
+            return {}
+
+    async def _gleif_entity() -> dict:
+        if not want_gleif:
+            return {}
+        try:
+            from app.integrations import gleif
+
+            return await gleif.get_entity(lei)
+        except Exception:
+            return {}
+
+    details, entity = await asyncio.gather(_wikidata_details(), _gleif_entity())
+
+    # Precedence preserved: apply Wikidata's fields first (it outranks GLEIF for
+    # this shared detail set), then let GLEIF fill only what is still missing —
+    # identical output to the old sequential version, just overlapped fetches.
+    if details:
         updates = {}
         # NOTE: details["incorporation_date"] (Wikidata P571 'inception') is
         # deliberately NOT used — it is the brand's founding (Tesco 1919), not
@@ -469,32 +497,23 @@ async def _cross_reference(
         ):
             value = details.get(key)
             if value and not getattr(result, field):
-                updates[field] = normalize_date(value) if field == "incorporation_date" else value
+                updates[field] = value
         if updates:
             result = result.model_copy(update=updates)
 
-    if _missing_fields(result):
-        lei = next(
-            (r["metadata"].get("lei") for r in matched if r.get("metadata", {}).get("lei")), None
-        )
-        if lei:
-            try:
-                from app.integrations import gleif
+    if entity:
+        updates = {}
+        for field, key in (
+            ("registered_address", "address"),
+            ("organization_type", "organization_type"),
+        ):
+            if entity.get(key) and not getattr(result, field):
+                updates[field] = entity[key]
+        if entity.get("entity_status") and not result.status:
+            updates["status"] = normalize_status(entity["entity_status"])
+        if updates:
+            result = result.model_copy(update=updates)
 
-                entity = await gleif.get_entity(lei)
-            except Exception:
-                entity = {}
-            updates = {}
-            for field, key in (
-                ("registered_address", "address"),
-                ("organization_type", "organization_type"),
-            ):
-                if entity.get(key) and not getattr(result, field):
-                    updates[field] = entity[key]
-            if entity.get("entity_status") and not result.status:
-                updates["status"] = normalize_status(entity["entity_status"])
-            if updates:
-                result = result.model_copy(update=updates)
     return result, details
 
 

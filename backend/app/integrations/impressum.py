@@ -13,6 +13,7 @@ impressum/imprint link, then regex-extract the legally mandated facts.
 Everything is total — failures return {} and never raise.
 """
 
+import asyncio
 import logging
 import re
 from urllib.parse import urljoin, urlparse
@@ -151,7 +152,8 @@ async def fetch_impressum(website: str) -> tuple[str, dict] | None:
     base = f"{parsed.scheme}://{parsed.netloc}"
 
     candidates = [urljoin(base, path) for path in _CANDIDATE_PATHS]
-    # Fall back to whatever the homepage links as Impressum/imprint.
+    # Fall back to whatever the homepage links as Impressum/imprint. The homepage
+    # fetch must come first — it is what reveals that linked URL.
     homepage = await _fetch_text(base)
     if homepage:
         soup = BeautifulSoup(homepage, "html.parser")
@@ -162,12 +164,19 @@ async def fetch_impressum(website: str) -> tuple[str, dict] | None:
                 candidates.append(urljoin(base, a["href"]))
                 break
 
+    # De-dup while preserving priority order, then fetch all candidates
+    # CONCURRENTLY (each was a separate sequential 10s GET before). Selection
+    # semantics are unchanged: walk the candidates in priority order and return
+    # the FIRST that yields a register fact.
+    ordered: list[str] = []
     seen: set[str] = set()
     for url in candidates:
-        if url in seen:
-            continue
-        seen.add(url)
-        html = await _fetch_text(url)
+        if url not in seen:
+            seen.add(url)
+            ordered.append(url)
+
+    pages = await asyncio.gather(*(_fetch_text(url) for url in ordered))
+    for url, html in zip(ordered, pages):
         if not html:
             continue
         facts = extract_company_facts(_page_text(html))

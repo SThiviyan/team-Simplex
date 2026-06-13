@@ -174,6 +174,39 @@ def test_impressum_extracts_mandated_facts():
     assert "registry_id" not in extract_company_facts("Kontakt: Musterweg 1, 12345 Berlin")
 
 
+async def test_fetch_impressum_priority_first_under_concurrency(monkeypatch):
+    """The candidate pages are now fetched concurrently, but selection must stay
+    priority-first: the earliest candidate (in _CANDIDATE_PATHS order) that
+    yields a register fact wins — and a hit on a lower-priority page is not
+    dropped just because higher-priority ones came back empty."""
+    from app.integrations import impressum
+
+    impressum_page = "Impressum\nExample GmbH\nRegistergericht: Amtsgericht Paderborn HRB 10033\n"
+    imprint_page = "Imprint\nExample GmbH\nRegistergericht: Amtsgericht Berlin HRB 99999\n"
+
+    async def fake_fetch(url: str):
+        # both /impressum (high prio) and /imprint (low prio) have facts
+        if url.endswith("/impressum"):
+            return impressum_page
+        if url.endswith("/imprint"):
+            return imprint_page
+        return None  # homepage + every other candidate: nothing
+
+    monkeypatch.setattr(impressum, "_fetch_text", fake_fetch)
+    url, facts = await impressum.fetch_impressum("https://example.com")
+    assert url == "https://example.com/impressum"  # priority-first, not /imprint
+    assert facts["registry_id"] == "HRB 10033"
+
+    # Only the lower-priority page has facts -> still found (not dropped).
+    async def only_imprint(url: str):
+        return imprint_page if url.endswith("/imprint") else None
+
+    monkeypatch.setattr(impressum, "_fetch_text", only_imprint)
+    url2, facts2 = await impressum.fetch_impressum("https://example.com")
+    assert url2 == "https://example.com/imprint"
+    assert facts2["registry_id"] == "HRB 99999"
+
+
 def test_most_recent_date_rule():
     from app.pipeline.enrichment import most_recent_date
 
