@@ -295,14 +295,17 @@ _ALL_DATA_FIELDS = (
 
 
 def _scrub(result: ExtractionResult) -> ExtractionResult:
-    """Final safety net before output. Two guarantees:
+    """Final safety net before output. Three guarantees:
 
     1. No junk values: any field whose value is a JSON fragment / null-marker
        (e.g. the literal ': null,') becomes None.
-    2. Output contract: a TRUE no-match — no registry_id AND no identified name
-       — carries NO Tier A/B data; the row is blank except its no_match_reason.
-       (A row we identified by name but couldn't get a number for keeps its
-       enrichment; only the number is missing.)
+    2. AMBIGUOUS -> NOTHING: if two or more entities could be the match, we do
+       NOT keep one candidate's attributes. The whole row is blanked except its
+       no_match_reason/flag — better empty than a field copied from the wrong
+       one of several candidates.
+    3. Output contract: a TRUE no-match — no registry_id AND no identified name
+       — carries NO Tier A/B data. (A row identified by name but missing only
+       the number keeps its enrichment.)
     """
     updates: dict = {}
     str_fields = ("registry_id", "name_normalized_register_name", "source", *_ALL_DATA_FIELDS)
@@ -311,6 +314,20 @@ def _scrub(result: ExtractionResult) -> ExtractionResult:
         if isinstance(value, str) and (not value.strip() or _JUNK_VALUE.match(value.strip())):
             updates[field] = None
     scrubbed = result.model_copy(update=updates) if updates else result
+
+    ambiguous = scrubbed.confidence_flag == FLAG_AMBIGUOUS or (
+        scrubbed.no_match_reason or ""
+    ).startswith("ambiguous")
+    if ambiguous:
+        # No single entity was chosen -> assert nothing. Keep only the verdict.
+        return scrubbed.model_copy(
+            update={
+                "registry_id": None,
+                "name_normalized_register_name": None,
+                "source": None,
+                **{f: None for f in _ALL_DATA_FIELDS},
+            }
+        )
 
     if not scrubbed.registry_id and not scrubbed.name_normalized_register_name:
         # Nothing was identified -> the row asserts nothing about any company.
@@ -472,7 +489,7 @@ Rules:
   sure the page describes THIS entity (same registry number / same registered name and
   place), return null for that field.
 - registered_address: the registered/legal address, as 'street, postcode, city, country'.
-- incorporation_date: ISO YYYY-MM-DD (YYYY alone if only the year is verifiable).
+- incorporation_date: the REGISTRATION/incorporation date with the register, NOT the founding/establishment year. ISO YYYY-MM-DD (YYYY alone if only the year is verifiable).
 - organization_type: the legal form as registered (GmbH, Ltd, B.V., S.à r.l., ...).
 - status: one of active / dissolved / in_liquidation / dormant, else null.
 - officers: 'role: name; role: name' for directors/officers a source explicitly lists.

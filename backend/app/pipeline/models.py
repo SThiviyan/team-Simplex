@@ -66,7 +66,7 @@ class ExtractionPayload(BaseModel):
         description="Registered address as the sources report it (street, postcode, city, country). Null if no source showed it."
     )
     incorporation_date: str | None = Field(
-        description="Incorporation/registration date in ISO format YYYY-MM-DD (or YYYY if only the year is known). Null if no source showed it."
+        description="Date the company was REGISTERED/INCORPORATED with the register (NOT the founding/establishment year). ISO YYYY-MM-DD (or YYYY if only the year is known). Null if no source showed it."
     )
     organization_type: str | None = Field(
         description="Legal form as registered (e.g. GmbH, AG, Ltd, B.V., S.à r.l.). Null if no source showed it."
@@ -99,7 +99,7 @@ class EnrichmentPayload(BaseModel):
         description="Registered/legal address as 'street, postcode, city, country'. Null if not verifiable."
     )
     incorporation_date: str | None = Field(
-        description="Incorporation date, ISO YYYY-MM-DD (or YYYY). Null if not verifiable."
+        description="Registration/incorporation date with the register (NOT founding/establishment year). ISO YYYY-MM-DD (or YYYY). Null if not verifiable."
     )
     organization_type: str | None = Field(
         description="Legal form as registered (GmbH, Ltd, B.V., ...). Null if not verifiable."

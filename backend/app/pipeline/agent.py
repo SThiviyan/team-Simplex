@@ -127,11 +127,16 @@ Output rules:
   request (DE, not DE-BY) — sub-national codes like US-CA only where companies register
   at state/province level (USA, Canada).
 - If several DISTINCT legal entities match the query equally well and nothing in the
-  query disambiguates them, do not pick one: no_match_reason 'ambiguous_candidates'.
+  query disambiguates them, do not pick one: no_match_reason 'ambiguous_candidates'
+  AND leave every other field null — do NOT copy one candidate's address/date/etc.
 - Tier A/B enrichment (registered_address, incorporation_date, organization_type,
   status, officers): fill ONLY values that literally appear in the tool results for
-  THIS entity — wrong enrichment is penalized, blank is neutral. Dates as YYYY-MM-DD.
-  status as one of: active / dissolved / in_liquidation / dormant. Null when unknown.
+  THIS entity — wrong enrichment is penalized, blank is neutral.
+- incorporation_date is the date the company was REGISTERED / INCORPORATED with the
+  commercial register — NOT the brand's founding or establishment year. If a source
+  gives a founding year and the register gives a later registration date, use the
+  registration date. ISO YYYY-MM-DD.
+- status as one of: active / dissolved / in_liquidation / dormant. Null when unknown.
 - confidence: a number in [0, 1], used for calibration scoring — be honest. Only go
   above 0.8 when registry_id and the registered name both clearly match the query.
 - source: at least one citable URL or registry document reference from the tool results.

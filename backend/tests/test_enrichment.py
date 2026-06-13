@@ -292,3 +292,22 @@ def test_source_ranking_foundation_and_order():
     assert [r["provider"] for r in order_records(recs, "DE")] == [
         "handelsregister", "gleif", "wikidata",
     ]
+
+
+def test_ambiguous_blanks_all_fields():
+    from app.pipeline.enrichment import _scrub
+
+    # An ambiguous row must not keep ANY candidate's attributes — only the
+    # verdict survives, so we never report one of several companies' address.
+    row = _row(
+        confidence_flag="ambiguous", no_match_reason="ambiguous_candidates",
+        name_normalized_register_name="Acme One GmbH",  # a tentative pick
+        registered_address="Somewhere 1, Berlin", organization_type="GmbH",
+        incorporation_date="2019-02-20", status="active", source="https://x",
+    )
+    out = _scrub(row)
+    assert out.no_match_reason == "ambiguous_candidates" and out.confidence_flag == "ambiguous"
+    assert out.name_normalized_register_name is None
+    assert out.registry_id is None and out.registered_address is None
+    assert out.organization_type is None and out.incorporation_date is None
+    assert out.status is None and out.source is None
