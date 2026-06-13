@@ -76,6 +76,67 @@ export async function csvSearch(rawQuery: string): Promise<CsvSearchResponse> {
 }
 
 // ---------------------------------------------------------------------------
+// Full pipeline (single company) — runs the foundation hierarchy + Tier A/B
+// enrichment, so the result carries EVERY CSV column and never anchors on
+// Wikidata. This is what the search box uses.
+
+// Mirrors backend ExtractionResult (app/pipeline/models.py) — the CSV row.
+export type ExtractionResult = {
+  query_id: string;
+  registry_id: string | null;
+  registry_court: string | null;
+  name_normalized_register_name: string | null;
+  jurisdiction_confirmed: string | null;
+  no_match_reason: string | null;
+  registered_address: string | null;
+  incorporation_date: string | null;
+  organization_type: string | null;
+  status: string | null;
+  confidence_flag: string | null;
+  officers: string | null;
+  confidence: number;
+  source: string | null;
+};
+
+type PipelineRunSummary = {
+  run_id: string;
+  rows_processed: number;
+  output_csv: string;
+  results: ExtractionResult[];
+};
+
+/** Split a free-text search box into (name, jurisdiction): "Audi, DE" or
+ *  "Audi DE" -> {name:"Audi", jurisdiction:"DE"}. */
+export function parseQuery(raw: string): { name: string; jurisdiction: string } {
+  const text = raw.trim();
+  const comma = text.indexOf(',');
+  if (comma !== -1) {
+    return { name: text.slice(0, comma).trim(), jurisdiction: text.slice(comma + 1).trim() };
+  }
+  const m = /^(.*?)\s+([A-Za-z]{2}(?:-[A-Za-z0-9]{1,3})?)$/.exec(text);
+  if (m) return { name: m[1].trim(), jurisdiction: m[2].toUpperCase() };
+  return { name: text, jurisdiction: '' };
+}
+
+/** Resolve one company through the full pipeline and return its CSV row. */
+export async function resolveCompany(raw: string): Promise<ExtractionResult> {
+  const { name, jurisdiction } = parseQuery(raw);
+  const r = await fetch('/api/pipeline/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: { name, jurisdiction } }),
+  });
+  if (!r.ok) {
+    const detail = await r.text().catch(() => '');
+    throw new Error(`resolve failed: ${r.status} ${detail.slice(0, 200)}`);
+  }
+  const summary: PipelineRunSummary = await r.json();
+  const row = summary.results[0];
+  if (!row) throw new Error('pipeline returned no result row');
+  return row;
+}
+
+// ---------------------------------------------------------------------------
 // Pipeline (registry-lookup chain): CSV upload, live run feed.
 
 export type PipelineRun = {

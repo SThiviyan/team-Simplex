@@ -1,19 +1,12 @@
 import { useState } from 'react';
 import { PipelinePanel } from './components/PipelinePanel';
 import { SearchBar } from './components/SearchBar';
-import { csvSearch, QueryRow, Winner } from './api';
+import { ExtractionResult, resolveCompany } from './api';
 
 type State =
   | { kind: 'idle' }
   | { kind: 'loading'; query: string }
-  | {
-      kind: 'ok';
-      query: string;
-      count: number;
-      queries: QueryRow[];
-      winners: Winner[];
-      file?: string;
-    }
+  | { kind: 'ok'; query: string; result: ExtractionResult }
   | { kind: 'error'; query: string; message: string };
 
 export default function App() {
@@ -22,15 +15,8 @@ export default function App() {
   async function runSearch(q: string) {
     setState({ kind: 'loading', query: q });
     try {
-      const r = await csvSearch(q);
-      setState({
-        kind: 'ok',
-        query: q,
-        count: r.count,
-        queries: r.queries,
-        winners: r.winners ?? [],
-        file: r.output_file,
-      });
+      const result = await resolveCompany(q);
+      setState({ kind: 'ok', query: q, result });
     } catch (e) {
       setState({
         kind: 'error',
@@ -75,118 +61,104 @@ function Header() {
   );
 }
 
+const FLAG_STYLE: Record<string, string> = {
+  verified: 'bg-emerald-500/10 text-emerald-700',
+  probable: 'bg-accent/10 text-accent',
+  ambiguous: 'bg-amber-500/15 text-amber-700',
+  not_found: 'bg-line/70 text-muted',
+  error: 'bg-red-500/10 text-red-700',
+};
+
 function Results({ state, onRetry }: { state: State; onRetry: () => void }) {
   if (state.kind === 'idle') return <IdleState />;
   if (state.kind === 'loading') return <LoadingState />;
   if (state.kind === 'error') return <ErrorState message={state.message} onRetry={onRetry} />;
 
-  // The matching layer (RapidFuzz + LLM semantic filter) picks one winning
-  // company per query; show those final results.
+  // The full pipeline (registry foundation hierarchy + Tier A/B enrichment)
+  // resolves one company and returns every CSV column — shown below.
   return (
     <section aria-label="Search complete" className="space-y-5 animate-fade-in-up">
-      <div className="flex items-center gap-2 text-sm text-ink">
-        <CheckIcon className="text-accent" />
-        <span>
-          Gathered <span className="font-semibold tabular-nums">{state.count}</span> record
-          {state.count === 1 ? '' : 's'} ·{' '}
-          <span className="font-semibold tabular-nums">{state.winners.length}</span> query
-          {state.winners.length === 1 ? '' : 'ies'} resolved.
-        </span>
-      </div>
-
-      <ul className="space-y-4">
-        {state.winners.map((w) => (
-          <WinnerCard key={w.query_id} winner={w} />
-        ))}
-      </ul>
-
-      {state.file ? (
-        <p className="font-mono text-[11px] text-muted">
-          gathered records written to <span className="text-ink/70">{state.file}</span>
-        </p>
-      ) : null}
+      <ResultCard query={state.query} r={state.result} />
     </section>
   );
 }
 
-function WinnerCard({ winner }: { winner: Winner }) {
-  const queryLabel = winner.jurisdiction
-    ? `${winner.name} [${winner.jurisdiction}]`
-    : winner.name;
-  const c = winner.winning_candidate;
-  const pct = Math.round((winner.confidence ?? 0) * 100);
-
-  if (winner.decision !== 'match' || !c) {
-    return (
-      <li className="rounded-xl border border-line bg-paper px-4 py-4 space-y-2">
-        <div className="flex items-baseline justify-between gap-3">
-          <span className="text-sm font-medium text-ink">{queryLabel}</span>
-          <span className="font-mono text-[11px] uppercase tracking-wide text-muted">
-            {winner.decision === 'recursive_search' ? 'needs re-search' : 'no match'}
-          </span>
-        </div>
-        {winner.decision === 'recursive_search' && winner.recursive_search ? (
-          <p className="text-[13px] text-ink">
-            Try searching for{' '}
-            <span className="font-semibold">
-              {winner.recursive_search.suggested_query}
-            </span>
-            .
-          </p>
-        ) : null}
-        {winner.reasoning ? (
-          <p className="text-[13px] text-muted text-balance">{winner.reasoning}</p>
-        ) : null}
-      </li>
-    );
-  }
+function ResultCard({ query, r }: { query: string; r: ExtractionResult }) {
+  const pct = Math.round((r.confidence ?? 0) * 100);
+  const flag = r.confidence_flag ?? (r.registry_id ? 'probable' : 'not_found');
+  const matched = !!r.registry_id || !!r.name_normalized_register_name;
+  const isUrl = (r.source ?? '').startsWith('http');
 
   return (
-    <li className="rounded-xl border border-accent/30 bg-accent-soft/30 px-4 py-4 space-y-3">
+    <div className="rounded-xl border border-accent/30 bg-accent-soft/30 px-4 py-4 space-y-3">
       <div className="flex items-baseline justify-between gap-3">
-        <div className="space-y-0.5">
-          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">
-            {queryLabel}
+        <div className="space-y-0.5 min-w-0">
+          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted truncate">
+            {query}
           </p>
           <h3 className="text-lg font-semibold tracking-[-0.01em] text-ink">
-            {c.name_normalized_register_name}
+            {r.name_normalized_register_name ?? <span className="text-muted">No match</span>}
           </h3>
         </div>
-        <span
-          className="shrink-0 rounded-full bg-accent/10 px-2.5 py-1 text-xs font-semibold tabular-nums text-accent"
-          title="match confidence"
-        >
-          {pct}%
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <span
+            className={`rounded-full px-2 py-1 font-mono text-[10px] uppercase tracking-wide ${
+              FLAG_STYLE[flag] ?? 'bg-line/70 text-muted'
+            }`}
+          >
+            {flag}
+          </span>
+          <span
+            className="rounded-full bg-accent/10 px-2.5 py-1 text-xs font-semibold tabular-nums text-accent"
+            title="confidence (calibrated)"
+          >
+            {pct}%
+          </span>
+        </div>
       </div>
 
+      {/* Every CSV column, in order. Empty fields are shown as a dash so the
+          full schema is always visible (matches the downloadable CSV). */}
       <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 text-[13px] sm:grid-cols-2">
-        <Field label="Jurisdiction" value={c.jurisdiction_confirmed} />
-        <Field label="Organization type" value={c.organization_type} />
-        <Field label="Registry ID" value={c.registry_id} />
-        <Field label="Registry court" value={c.registry_court} />
-        <Field label="Address" value={c.address} span />
-        <Field label="Last update" value={c.last_update} />
-        <Field label="Source" value={c.provider} />
+        <Field label="Registry ID" value={r.registry_id} mono />
+        <Field label="Registry court" value={r.registry_court} />
+        <Field label="Registered name" value={r.name_normalized_register_name} />
+        <Field label="Jurisdiction" value={r.jurisdiction_confirmed} />
+        <Field label="Organization type" value={r.organization_type} />
+        <Field label="Status" value={r.status} />
+        <Field label="Incorporation date" value={r.incorporation_date} />
+        <Field label="No-match reason" value={r.no_match_reason} />
+        <Field label="Registered address" value={r.registered_address} span />
+        <Field label="Officers" value={r.officers} span />
       </dl>
 
-      {c.source ? (
-        <a
-          href={c.source}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-block font-mono text-[11px] text-accent hover:text-ink transition-colors break-all"
-        >
-          {c.source}
-        </a>
-      ) : null}
+      <div className="flex items-center justify-between gap-3 border-t border-line pt-2">
+        <span className="text-[10px] uppercase tracking-wide text-muted">Source</span>
+        {r.source ? (
+          isUrl ? (
+            <a
+              href={r.source}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-[11px] text-accent hover:text-ink transition-colors break-all text-right"
+            >
+              {r.source}
+            </a>
+          ) : (
+            <span className="font-mono text-[11px] text-ink/70 break-all text-right">{r.source}</span>
+          )
+        ) : (
+          <span className="text-[11px] text-muted">—</span>
+        )}
+      </div>
 
-      {winner.reasoning ? (
-        <p className="text-[12px] text-muted text-balance border-t border-line pt-2">
-          {winner.reasoning}
+      {!matched ? (
+        <p className="text-[12px] text-muted text-balance">
+          No registry entry was confidently found. The fields above are left blank rather than
+          guessed.
         </p>
       ) : null}
-    </li>
+    </div>
   );
 }
 
@@ -194,36 +166,21 @@ function Field({
   label,
   value,
   span = false,
+  mono = false,
 }: {
   label: string;
   value: string | null | undefined;
   span?: boolean;
+  mono?: boolean;
 }) {
-  if (!value) return null;
+  // Always render the row — every CSV column stays visible; empty -> dash.
   return (
     <div className={span ? 'sm:col-span-2' : undefined}>
       <dt className="text-[10px] uppercase tracking-wide text-muted">{label}</dt>
-      <dd className="text-ink">{value}</dd>
+      <dd className={`${mono ? 'font-mono ' : ''}${value ? 'text-ink' : 'text-muted'}`}>
+        {value || '—'}
+      </dd>
     </div>
-  );
-}
-
-function CheckIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <path d="M20 6 9 17l-5-5" />
-    </svg>
   );
 }
 
