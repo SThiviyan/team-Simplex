@@ -106,11 +106,26 @@ async def _bounded_search(p: SearchProvider, name: str, limit: int) -> list[Sear
 async def _gather(
     selected: list[SearchProvider], name: str, jurisdiction: str | None, limit: int
 ) -> list[SearchResult]:
-    batches = await asyncio.gather(
-        *(_bounded_search(p, name, limit) for p in selected), return_exceptions=True
-    )
+    from app.config import settings
+
+    # Run all sources concurrently, but cap the WHOLE gather: after
+    # gather_deadline, use whatever responded and cancel the stragglers. A slow or
+    # blocked primary (e.g. the unreachable handelsregister.de scrape) can never
+    # make the row hang — it just doesn't contribute, and the agent escalates
+    # (other sources, then web search). Per-provider search_timeout still bounds
+    # each call individually.
+    tasks = [asyncio.ensure_future(_bounded_search(p, name, limit)) for p in selected]
+    done, pending = await asyncio.wait(tasks, timeout=settings.gather_deadline)
+    for t in pending:
+        t.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)  # let cancellations settle
     results: list[SearchResult] = []
-    for b in batches:
+    for t in done:
+        try:
+            b = t.result()
+        except Exception:
+            continue
         if isinstance(b, list):
             results.extend(b)
     if jurisdiction:

@@ -80,7 +80,10 @@ def search_companies(name: str, limit: int = 10) -> list[dict]:
 
 
 def _search(b: mechanize.Browser, name: str, limit: int) -> list[dict]:
-    b.open(START_URL, timeout=12)
+    # Short connect/socket timeout: when handelsregister.de blocks/ignores this
+    # IP it just hangs, so fail fast (4s) instead of stalling the gather; a
+    # reachable portal answers well within this.
+    b.open(START_URL, timeout=4)
 
     # Trigger the JSF "advanced search" command link by injecting its params.
     b.select_form(name="naviForm")

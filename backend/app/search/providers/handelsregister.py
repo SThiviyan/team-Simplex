@@ -15,9 +15,11 @@ class HandelsregisterSearchProvider(SearchProvider):
     name = "handelsregister"
     jurisdictions = {"DE"}
     enabled = True
-    # The JSF scrape is serialized + multi-page; the 12s fast-API default
-    # strangles it (cancels mid-flow → 0 results). Give it a real budget.
-    search_timeout = 45.0
+    # The JSF scrape is multi-page so it needs more than the fast-API default,
+    # but NOT 45s: handelsregister.de blocks datacenter IPs and then just hangs,
+    # which used to stall the whole row. Cap it so an unreachable/slow portal is
+    # abandoned in a few seconds and the row escalates (GLEIF/Impressum/web).
+    search_timeout = 12.0
 
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
         # The handelsregister.de scrape is the slowest source in the stack

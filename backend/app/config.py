@@ -56,9 +56,17 @@ class Settings(BaseSettings):
 
     # --- Gather / scrape tuning (speed) -------------------------------------
     provider_timeout: float = Field(
-        default=12.0,
-        description="Hard per-provider timeout (s) in the gather layer; a slow source "
-        "can't stall the row",
+        default=6.0,
+        description="Hard per-provider timeout (s) in the gather layer; an unresponsive "
+        "source is dropped quickly so the row escalates instead of stalling. (Slow "
+        "scrapers/Apify set their own higher search_timeout.)",
+    )
+    gather_deadline: float = Field(
+        default=45.0,
+        description="Hard overall cap (s) on the whole gather: after it, whatever sources "
+        "responded are used and the rest are cancelled — the row never hangs. Set above the "
+        "slowest source you actually want to wait for (NorthData ~35s); lower it for a "
+        "snappier UI that escalates to web search sooner.",
     )
     handelsregister_scrape_fallback: bool = Field(
         default=True,
