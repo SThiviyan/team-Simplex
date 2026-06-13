@@ -12,6 +12,7 @@ the fallback. Structured JSON output is enforced via output_config throughout.
 """
 
 import asyncio
+import contextvars
 import logging
 import re
 from dataclasses import dataclass, field
@@ -30,6 +31,23 @@ MAX_PAUSE_TURN_CONTINUATIONS = 5
 # a confused agent from burning 8 Opus calls on one row. On cap-hit the entry
 # returns None and the walk/fallback continues exactly as before.
 MAX_TOOL_ROUNDS = 5
+
+# Per-run cap on the Layer-1 tool loop. Batch (CSV) runs lower it so each row
+# fires fewer Opus calls (faster + less Anthropic 429 pressure across dozens of
+# parallel rows); a single interactive query leaves it None -> MAX_TOOL_ROUNDS.
+_max_rounds_var: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "agent_max_tool_rounds", default=None
+)
+
+
+def set_max_tool_rounds(n: int | None) -> None:
+    _max_rounds_var.set(n)
+
+
+def _max_tool_rounds() -> int:
+    n = _max_rounds_var.get()
+    return n if n and n > 0 else MAX_TOOL_ROUNDS
+
 
 # no_match_reason prefix marking "the pipeline errored", as opposed to a genuine
 # registry no-match (not_in_registry / ambiguous_candidates / out_of_scope).
@@ -542,7 +560,7 @@ async def _mcp_attempt(
             )
         messages = [{"role": "user", "content": user}]
 
-        for round_idx in range(MAX_TOOL_ROUNDS):
+        for round_idx in range(_max_tool_rounds()):
             kwargs: dict = dict(
                 model=settings.anthropic_model,
                 max_tokens=4000,

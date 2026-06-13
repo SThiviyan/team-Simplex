@@ -268,15 +268,22 @@ async def run_pipeline(
     # don't each pay the ~35s web-search tail (the dominant batch cost); a single
     # interactive query leaves it None -> settings default. Multi-row batches also
     # get a higher concurrency cap so independent rows truly run in parallel.
-    from app.pipeline import enrichment
+    from app.pipeline import agent, enrichment
 
     enrichment.set_web_fill_override(web_fill)
     run_id = event_log.new_run_id()
     await event_log.log_event(run_id, "run_started", rows=len(queries))
 
     concurrency = settings.pipeline_concurrency
-    if len(queries) > 1:
+    is_batch = len(queries) > 1
+    if is_batch:
         concurrency = max(concurrency, min(len(queries), settings.batch_concurrency))
+        # Fewer Opus tool-loop rounds per row in a batch: bounds the slowest rows
+        # and the total Anthropic call volume (429-storm avoidance) so dozens run
+        # in parallel fast. Single interactive queries keep the full budget.
+        agent.set_max_tool_rounds(settings.batch_agent_rounds)
+    else:
+        agent.set_max_tool_rounds(None)
     semaphore = asyncio.Semaphore(concurrency)
     # gather() preserves input order regardless of completion order.
     results = list(

@@ -139,10 +139,17 @@ class Settings(BaseSettings):
         "API rate limits / 529 storms bite",
     )
     batch_concurrency: int = Field(
-        default=50,
-        description="Concurrency cap for multi-row (CSV) batches — rows are independent, so this "
-        "lets dozens run at once. The real ceiling is the Anthropic rate limit (too high -> 429 "
-        "storms that slow it DOWN), so this is a sane upper bound, not 'unlimited'.",
+        default=12,
+        description="Concurrency cap for multi-row (CSV) batches. NOT 'as high as possible': "
+        "too high floods the Anthropic API and triggers 429 backoff that slows the whole batch "
+        "DOWN (measured: 50 -> 429 storms -> ~10min for 50 rows; ~12 stays under the limit). "
+        "Raise only if your Anthropic tier has lots of headroom.",
+    )
+    batch_agent_rounds: int = Field(
+        default=2,
+        description="Max Layer-1 Opus tool-loop rounds PER ROW in a batch (vs 5 interactively). "
+        "Fewer rounds = fewer LLM calls/row = faster batch + less 429 pressure; the first 1-2 "
+        "rounds resolve the vast majority. Single interactive queries keep the full budget.",
     )
 
 
