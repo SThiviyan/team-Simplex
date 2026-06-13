@@ -38,6 +38,12 @@ export function describe(e: PipelineEvent): string {
       return `agent died, salvaging ${p.record_count} gathered records`;
     case 'impressum_checked':
       return `impressum ${p.corroborates ? 'corroborates the registry id' : 'checked'}`;
+    case 'contradiction': {
+      const vals = (p.values ?? [])
+        .map((v: any) => `${v.value} (${v.source})`)
+        .join(' vs ');
+      return `⚠ contradiction on ${p.field}: ${vals} — field left blank, confidence lowered`;
+    }
     case 'enrichment_web_fill':
       return `web enrichment filled: ${(p.fields ?? []).join(', ')}`;
     case 'enrichment_done':

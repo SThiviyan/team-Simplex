@@ -210,17 +210,22 @@ def resolve_conflict(values: list[tuple[str, str | None]]) -> str | None:
     return None  # genuine conflict, no timestamps to break it -> blank
 
 
-def _merge_from_records(result: ExtractionResult, matched: list[dict]) -> ExtractionResult:
-    """Fill the table top-down by the country's source hierarchy.
+def _merge_from_records(
+    result: ExtractionResult, matched: list[dict]
+) -> tuple[ExtractionResult, list[dict]]:
+    """Fill the table top-down by the country's source hierarchy and report any
+    contradictions found along the way.
 
     `matched` is already ordered foundation-first. For each field we take the
     highest-ranked source's value; on a genuine cross-source CONFLICT the field
-    is left blank unless data timestamps let the newer value win
-    (resolve_conflict). incorporation_date keeps the domain rule that the most
-    recent date wins (founding < incorporation). Fields already set on `result`
-    (from the Layer-1 agent) are preserved.
+    is left blank unless data timestamps let the newer value win. Each such
+    unresolved disagreement is recorded as a contradiction (field + the
+    conflicting values and the sources that gave them) so the caller can surface
+    it and lower confidence. incorporation_date keeps the most-recent-date rule.
+    Fields already set on `result` (from the Layer-1 agent) are preserved.
     """
     updates: dict = {}
+    contradictions: list[dict] = []
 
     # Categorical fields: resolve by hierarchy + conflict rule on normalized
     # values. `canonical` fields (status) store the normalized value; the rest
@@ -236,22 +241,26 @@ def _merge_from_records(result: ExtractionResult, matched: list[dict]) -> Extrac
     for field, key, normalize, canonical in field_specs:
         # Group raw values by normalized key, keeping rank order; collapse
         # format-only differences so they don't read as conflicts.
-        by_norm: dict[str, tuple[str, str | None]] = {}
+        by_norm: dict[str, tuple[str, str | None, str | None]] = {}
         for r in matched:
             raw = r.get(key)
             norm = normalize(raw)
             if norm and norm not in by_norm:
-                by_norm[norm] = (norm if canonical else raw, r.get("last_update"))
+                by_norm[norm] = (norm if canonical else raw, r.get("last_update"), r.get("provider"))
         if not by_norm:
             continue  # no source data for this field — keep the agent's value
-        resolved = resolve_conflict(list(by_norm.values()))
+        resolved = resolve_conflict([(v, ts) for v, ts, _ in by_norm.values()])
         if resolved:
             # Hierarchy (or newest on a dated conflict) fills/overrides.
             updates[field] = resolved
-        elif not getattr(result, field):
-            # Unresolved conflict and the agent had nothing: stay blank. (We do
-            # NOT erase a value the agent already grounded.)
-            pass
+        elif len(by_norm) >= 2:
+            # Sources genuinely disagree and nothing breaks the tie -> blank the
+            # field AND record the contradiction.
+            updates[field] = None
+            contradictions.append({
+                "field": field,
+                "values": [{"value": v, "source": src} for v, _, src in by_norm.values()],
+            })
 
     # incorporation_date: most-recent date across all matched records + any
     # value the agent already had (deterministic conflict resolution — the
@@ -263,7 +272,8 @@ def _merge_from_records(result: ExtractionResult, matched: list[dict]) -> Extrac
     if date and date != result.incorporation_date:
         updates["incorporation_date"] = date
 
-    return result.model_copy(update=updates) if updates else result
+    merged = result.model_copy(update=updates) if updates else result
+    return merged, contradictions
 
 
 def _address_key(value: str | None) -> str | None:
@@ -636,8 +646,9 @@ async def enrich_result(
     matched = matching_records(result, records)
 
     has_identity = bool(result.registry_id or result.name_normalized_register_name)
+    contradictions: list[dict] = []
     if has_identity and not settings.pipeline_mock:
-        result = _merge_from_records(result, matched)
+        result, contradictions = _merge_from_records(result, matched)
         details: dict = {}
         try:
             result, details = await _cross_reference(result, matched)
@@ -667,6 +678,19 @@ async def enrich_result(
             )
 
     flag = _confidence_flag(result, matched)
+    # Contradictions are reasons for doubt: each unresolved cross-source
+    # disagreement lowers the calibrated confidence, and any contradiction stops
+    # a row from being "verified" (independent sources didn't actually agree).
+    confidence = result.confidence
+    if contradictions:
+        flag = FLAG_PROBABLE if flag == FLAG_VERIFIED else flag
+        confidence = max(0.0, confidence - min(0.3, 0.1 * len(contradictions)))
+        for c in contradictions:
+            await event_log.log_event(
+                run_id, "contradiction", query.query_id,
+                field=c["field"], values=c["values"],
+            )
+
     # Output formatting LAST (after grounding/matching ran on raw values):
     # reshape registry_id/court to the jurisdiction's conventional form
     # ("56247t" -> "FN 56247 t", "Local Court Munich" -> "Amtsgericht München").
@@ -678,7 +702,7 @@ async def enrich_result(
             "registry_id": normalize_registry_id(cc, result.registry_id),
             "registry_court": normalize_registry_court(cc, result.registry_court),
             "confidence_flag": flag,
-            "confidence": round(min(result.confidence, _CONFIDENCE_CAPS[flag]), 2),
+            "confidence": round(min(confidence, _CONFIDENCE_CAPS[flag]), 2),
             "jurisdiction_confirmed": _echo_jurisdiction(result, query),
         }
     )
@@ -689,5 +713,6 @@ async def enrich_result(
         flag=flag, confidence=result.confidence,
         filled=[f for f in ENRICHABLE_FIELDS if getattr(result, f)],
         empty=_missing_fields(result),
+        contradictions=len(contradictions),
     )
     return result

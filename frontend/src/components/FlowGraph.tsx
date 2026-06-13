@@ -70,17 +70,25 @@ const EVENT_STAGE: Record<string, StageId> = {
   query_completed: 'winner',
 };
 
+export type Contradiction = { field: string; values: { value: string; source: string }[] };
+
 export function buildStages(events: PipelineEvent[]): {
   stages: Stage[];
   trajectory: { label: string; confidence: number }[];
+  contradictions: Contradiction[];
 } {
   const map = new Map<StageId, Stage>();
   for (const id of STAGE_ORDER) {
     map.set(id, { id, label: STAGE_LABEL[id], state: 'pending', count: 0 });
   }
   const trajectory: { label: string; confidence: number }[] = [];
+  const contradictions: Contradiction[] = [];
 
   for (const e of events) {
+    if (e.event_type === 'contradiction') {
+      const p = e.payload as Record<string, any>;
+      contradictions.push({ field: p.field, values: p.values ?? [] });
+    }
     const id = EVENT_STAGE[e.event_type];
     if (!id) continue;
     const st = map.get(id)!;
@@ -125,11 +133,11 @@ export function buildStages(events: PipelineEvent[]): {
     if (st.state === 'pending' && i < lastDone) st.state = 'skipped';
     if (st.state === 'pending' && i === lastDone + 1) st.state = 'active';
   });
-  return { stages: STAGE_ORDER.map((id) => map.get(id)!), trajectory };
+  return { stages: STAGE_ORDER.map((id) => map.get(id)!), trajectory, contradictions };
 }
 
 export function FlowGraph({ events }: { events: PipelineEvent[] }) {
-  const { stages, trajectory } = buildStages(events);
+  const { stages, trajectory, contradictions } = buildStages(events);
   if (events.length === 0) return null;
   const maxCount = Math.max(...stages.map((s) => s.count), 1);
 
@@ -159,6 +167,26 @@ export function FlowGraph({ events }: { events: PipelineEvent[] }) {
                 {Math.round(t.confidence * 100)}%
               </span>
             </span>
+          ))}
+        </div>
+      ) : null}
+      {contradictions.length > 0 ? (
+        <div className="space-y-1 border-t border-line pt-2">
+          <p className="text-[11px] font-medium" style={{ color: AMBER }}>
+            ⚠ {contradictions.length} source contradiction{contradictions.length === 1 ? '' : 's'} —
+            field{contradictions.length === 1 ? '' : 's'} left blank, confidence lowered
+          </p>
+          {contradictions.map((c, i) => (
+            <p key={i} className="text-[10px] text-muted">
+              <span className="font-mono">{c.field}</span>:{' '}
+              {c.values.map((v, j) => (
+                <span key={j}>
+                  {j > 0 ? ' ≠ ' : ''}
+                  <span className="text-ink/70">{v.value}</span>
+                  <span className="text-muted/60"> ({v.source})</span>
+                </span>
+              ))}
+            </p>
           ))}
         </div>
       ) : null}

@@ -104,7 +104,7 @@ def test_merge_fills_by_hierarchy_and_blanks_on_conflict():
     assert all(r["registry_id"] != "HRB 999" for r in matched)
     # Hierarchy: handelsregister ranks before gleif for DE.
     assert [r["provider"] for r in matched] == ["handelsregister", "gleif"]
-    merged = _merge_from_records(row, matched)
+    merged, _ = _merge_from_records(row, matched)
     assert merged.registered_address is None          # conflicting addresses -> blank
     assert merged.status == "active"                  # only registry had it
     assert merged.organization_type == "GMBH"         # only gleif had it
@@ -122,7 +122,7 @@ def test_merge_agreement_uses_top_ranked_value():
                 address="Hauptstr 1, 10115, Berlin, DE",  # same address, different formatting
                 organization_type="Gesellschaft mit beschränkter Haftung"),
     ]
-    merged = _merge_from_records(row, matching_records(row, records))
+    merged, _ = _merge_from_records(row, matching_records(row, records))
     # Same address (formatting-only diff) -> filled from the top source (registry).
     assert merged.registered_address == "Hauptstr 1, 10115, Berlin, DE"
     # GmbH == "Gesellschaft mit beschränkter Haftung" -> not a conflict; registry wins.
@@ -195,14 +195,14 @@ def test_registry_overrides_brand_founding_date_and_legal_form():
         incorporation_date="1947-11-27", organization_type="Public limited company",
         registry_court=None,
     )
-    merged = _merge_from_records(row, matching_records(row, [registry_rec]))
+    merged, _ = _merge_from_records(row, matching_records(row, [registry_rec]))
     assert merged.incorporation_date == "1947-11-27"  # registry wins, even though older year given first
     assert merged.organization_type == "Public limited company"
 
     # Without a registry source, conflicting dates resolve to the most recent.
     row2 = _row(registry_id="X1", name_normalized_register_name="Acme", incorporation_date="1919")
     wiki_rec = _record(registry_id="X1", provider="wikidata", incorporation_date="1947-11-27")
-    merged2 = _merge_from_records(row2, matching_records(row2, [wiki_rec]))
+    merged2, _ = _merge_from_records(row2, matching_records(row2, [wiki_rec]))
     assert merged2.incorporation_date == "1947-11-27"
 
 
@@ -210,7 +210,7 @@ def test_registry_court_comes_from_register_record():
     row = _row(registry_id="HRB 1", name_normalized_register_name="Acme GmbH")
     rec = _record(registry_id="HRB 1", provider="handelsregister",
                   registry_court="Amtsgericht München")
-    merged = _merge_from_records(row, matching_records(row, [rec]))
+    merged, _ = _merge_from_records(row, matching_records(row, [rec]))
     assert merged.registry_court == "Amtsgericht München"
 
 
@@ -311,3 +311,29 @@ def test_ambiguous_blanks_all_fields():
     assert out.registry_id is None and out.registered_address is None
     assert out.organization_type is None and out.incorporation_date is None
     assert out.status is None and out.source is None
+
+
+def test_merge_records_contradiction_blanks_and_reports():
+    # Two sources give DIFFERENT statuses for the same entity -> the field is
+    # blanked AND a contradiction is reported (field + both values + sources).
+    row = _row(registry_id="HRB 1", name_normalized_register_name="Acme GmbH",
+               jurisdiction_confirmed="DE")
+    records = [
+        _record(registry_id="HRB 1", provider="handelsregister", status="aktuell"),
+        _record(registry_id="HRB 1", provider="gleif", status="dissolved"),
+    ]
+    merged, contradictions = _merge_from_records(row, matching_records(row, records))
+    assert merged.status is None  # contradicted -> blank
+    assert len(contradictions) == 1
+    c = contradictions[0]
+    assert c["field"] == "status"
+    sources = {v["source"] for v in c["values"]}
+    assert sources == {"handelsregister", "gleif"}
+
+    # Agreement (after normalization) -> no contradiction.
+    records2 = [
+        _record(registry_id="HRB 1", provider="handelsregister", status="aktuell"),
+        _record(registry_id="HRB 1", provider="gleif", status="ACTIVE"),
+    ]
+    merged2, contradictions2 = _merge_from_records(row, matching_records(row, records2))
+    assert merged2.status == "active" and contradictions2 == []
