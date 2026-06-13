@@ -74,23 +74,34 @@ class ExtractionPayload(BaseModel):
     status: str | None = Field(
         description="Company status: active / dissolved / in_liquidation / dormant. Null if no source showed it."
     )
+    # These six are NOT requested from the Layer-1 identity LLM (they are pruned
+    # from its structured-output schema to stay under Anthropic's 16 union-typed
+    # parameter limit — see agent._layer1_output_schema) and are filled by the
+    # enrichment layer instead. They therefore MUST default to None, so a Layer-1
+    # payload validates even though the model omits them.
     vat_number: str | None = Field(
-        description="VAT / USt-IdNr / TVA number as a source states it (e.g. 'DE266929333'). Null if no source showed it."
+        default=None,
+        description="VAT / USt-IdNr / TVA number as a source states it (e.g. 'DE266929333'). Null if no source showed it.",
     )
     trade_names: str | None = Field(
-        description="Trading / brand / other registered names, distinct from the legal name; 'name; name'. Null if none shown."
+        default=None,
+        description="Trading / brand / other registered names, distinct from the legal name; 'name; name'. Null if none shown.",
     )
     industry_code: str | None = Field(
-        description="Industry classification code as the source gives it (NACE/NAF/SIC/WZ, e.g. '62.01'). Null if no source showed it."
+        default=None,
+        description="Industry classification code as the source gives it (NACE/NAF/SIC/WZ, e.g. '62.01'). Null if no source showed it.",
     )
     industry: str | None = Field(
-        description="Industry / business-sector name for that code (e.g. 'Computer programming'). Null if no source showed it."
+        default=None,
+        description="Industry / business-sector name for that code (e.g. 'Computer programming'). Null if no source showed it.",
     )
     capitalization: str | None = Field(
-        description="Registered/share capital with currency as stated (e.g. 'EUR 25,000'). Null if no source showed it."
+        default=None,
+        description="Registered/share capital with currency as stated (e.g. 'EUR 25,000'). Null if no source showed it.",
     )
     business_purpose: str | None = Field(
-        description="Registered business purpose / object (DE 'Gegenstand des Unternehmens'). Null if no source showed it."
+        default=None,
+        description="Registered business purpose / object (DE 'Gegenstand des Unternehmens'). Null if no source showed it.",
     )
     # --- Tier B (partial coverage — fill only when a source explicitly lists them) ---
     officers: str | None = Field(

@@ -251,11 +251,18 @@ def _extract_payload(response) -> ExtractionPayload | None:
     the first that IS the schema; never blindly take the last block, which may
     be a citation fragment that would otherwise leak garbage into a field."""
     texts = [b.text for b in reversed(response.content) if b.type == "text" and b.text]
+    last_error: ValueError | None = None
     for text in texts:
         try:
             return ExtractionPayload.model_validate_json(text)
-        except ValueError:
+        except ValueError as exc:
+            last_error = exc
             continue
+    # No block validated. Returning None here silently drops the identity answer
+    # (the caller treats it as "nothing came back"), so make a real mismatch —
+    # e.g. the output schema and ExtractionPayload drifting apart — visible.
+    if texts:
+        logger.warning("Layer-1 payload did not validate (%d block(s)): %s", len(texts), last_error)
     return None
 
 
