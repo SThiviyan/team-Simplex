@@ -9,8 +9,10 @@ async def test_tools_registered():
 
 
 def test_list_sources_covers_all_with_jurisdictions():
+    from app.search.sources import all_providers
+
     by = {s["name"]: s["jurisdictions"] for s in cr.list_sources()}
-    assert len(by) == 20
+    assert len(by) == len(all_providers())  # MCP server exposes every provider
     assert by["companies_house"] == ["GB"] and by["ares"] == ["CZ"]
     assert by["kvk"] == ["NL"] and by["orgbook"] == ["CA"]
     # Global sources have no jurisdiction restriction.

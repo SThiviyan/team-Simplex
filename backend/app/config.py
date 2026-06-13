@@ -32,6 +32,27 @@ class Settings(BaseSettings):
         default="l7xx1f2691f2520d487b902f4e0b57a0b197",
         description="KVK Zoeken API key (default = KVK public test key; prod key for real data)",
     )
+    # gBizINFO (Japan, METI): free but token-gated. Provider self-disables unset.
+    gbizinfo_api_token: str | None = Field(
+        default=None, description="gBizINFO API token (sent as X-hojinInfo-api-token)"
+    )
+    # Zefix (Switzerland): free Public REST API but registration-gated (HTTP Basic).
+    # Register at https://www.zefix.admin.ch; provider self-disables without both.
+    zefix_user: str | None = Field(default=None, description="Zefix Public REST username")
+    zefix_password: str | None = Field(default=None, description="Zefix Public REST password")
+
+    # --- Apify (actor-backed premium sources: NorthData DE/AT/CH, US, KRS, …) --
+    # Optional. Every Apify-backed provider requires BOTH a token AND the global
+    # apify_enabled flag (the actors are paid + slow ~20s), else it returns [].
+    # NorthData is the keyed path to German Handelsregister data that bypasses
+    # handelsregister.de's datacenter-IP block.
+    apify_api_key: str | None = Field(
+        default=None, description="Apify API token (read from APIFY_API_KEY)"
+    )
+    apify_enabled: bool = Field(
+        default=False,
+        description="Enable all Apify-backed providers (read from APIFY_ENABLED); needs apify_api_key",
+    )
 
     # --- Gather / scrape tuning (speed) -------------------------------------
     provider_timeout: float = Field(

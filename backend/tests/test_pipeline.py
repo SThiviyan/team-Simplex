@@ -66,7 +66,8 @@ def test_mcp_registry_routes_to_internal_endpoints():
     assert get_mcp_servers("US-CA")[-1].url == "internal:us"
     # Uncovered countries land on the global bucket (GLEIF/Wikidata).
     assert get_mcp_servers("UK")[-1].url == "internal:gb"  # alias routes to GB bucket
-    assert get_mcp_servers("CH")[-1].url == "internal:global"
+    # CH now has its own bucket (zefix/northdata providers cover it).
+    assert get_mcp_servers("CH")[-1].url == "internal:ch"
 
 
 async def test_country_alias_normalization():
@@ -233,7 +234,8 @@ def test_grounding_replaces_fabricated_source_urls():
 def test_mcp_registry_falls_back_when_country_csv_is_missing():
     # US/BR/AT are mapped to CSV files that don't exist yet — they must fall
     # back to the extra_eu list instead of silently getting no external entries.
-    for cc, bucket in (("US", "us"), ("BR", "global"), ("AT", "global")):
+    # (All three now also have their own provider bucket after the verify_info pull.)
+    for cc, bucket in (("US", "us"), ("BR", "br"), ("AT", "at")):
         entries = get_mcp_servers(cc)
         assert entries[-1].url == f"internal:{bucket}"
         external = entries[:-1]
