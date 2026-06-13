@@ -286,6 +286,77 @@ def _address_key(value: str | None) -> str | None:
     return " ".join(sorted(set(tokens))) or None
 
 
+def _adopt_foundation_registry_id(
+    result: ExtractionResult, matched: list[dict]
+) -> ExtractionResult:
+    """When the row has no registry_id, take it from the highest-ranked
+    FOUNDATION record that has one (matched records are foundation-first). The
+    matched set already agrees on the entity by name/id, so this just moves the
+    grounded number from e.g. GLEIF onto a row the agent anchored on Wikidata."""
+    from app.search.source_ranking import is_foundation_source
+
+    if result.registry_id:
+        return result
+    for r in matched:
+        rid = r.get("registry_id")
+        if rid and is_foundation_source(r.get("provider")):
+            return result.model_copy(
+                update={
+                    "registry_id": rid,
+                    "registry_court": result.registry_court or r.get("registry_court"),
+                    "name_normalized_register_name": (
+                        result.name_normalized_register_name
+                        or r.get("name_normalized_register_name")
+                    ),
+                    "jurisdiction_confirmed": (
+                        result.jurisdiction_confirmed or r.get("jurisdiction_confirmed")
+                    ),
+                    "source": result.source or r.get("source"),
+                    "no_match_reason": None,
+                }
+            )
+    return result
+
+
+async def _gleif_name_backfill(
+    result: ExtractionResult, query: QueryRow, run_id: str
+) -> ExtractionResult:
+    """One GLEIF search by the identified FULL name to recover a registry number
+    when the row has none. Adopts a registeredAs from a GLEIF record whose name
+    agrees and whose country matches — grounded, single bounded call."""
+    from app.integrations import gleif
+    from app.search.base import normalize_country
+
+    name = result.name_normalized_register_name
+    if not name:
+        return result
+    want = normalize_country((result.jurisdiction_confirmed or query.jurisdiction or "").split("-")[0])
+    entities = await gleif.search_entities(name, limit=5)
+    for e in entities:
+        rid = e.get("registered_as")
+        if not rid or not names_agree(name, e.get("name")):
+            continue
+        ej = (e.get("jurisdiction") or e.get("country") or "").upper()
+        if want and ej and normalize_country(ej.split("-")[0]) != want:
+            continue
+        await event_log.log_event(
+            run_id, "gleif_backfill", query.query_id, registry_id=rid, name=e.get("name")
+        )
+        return result.model_copy(
+            update={
+                "registry_id": rid,
+                "name_normalized_register_name": e.get("name") or name,
+                "jurisdiction_confirmed": result.jurisdiction_confirmed or ej or None,
+                "registered_address": result.registered_address or e.get("address"),
+                "organization_type": result.organization_type or e.get("organization_type"),
+                "status": result.status or e.get("entity_status"),
+                "source": e.get("record_url") or result.source,
+                "no_match_reason": None,
+            }
+        )
+    return result
+
+
 def _missing_fields(result: ExtractionResult) -> list[str]:
     return [f for f in ENRICHABLE_FIELDS if not getattr(result, f)]
 
@@ -648,6 +719,12 @@ async def enrich_result(
     has_identity = bool(result.registry_id or result.name_normalized_register_name)
     contradictions: list[dict] = []
     if has_identity and not settings.pipeline_mock:
+        # Foundation supplies the registry_id: if the agent identified the entity
+        # by name but anchored on a non-registry source (e.g. Wikidata), adopt the
+        # official number from the top-ranked FOUNDATION record for the same
+        # entity (e.g. GLEIF's registeredAs). It's grounded (came from a tool
+        # result) and the hierarchy already vetted that the names agree.
+        result = _adopt_foundation_registry_id(result, matched)
         result, contradictions = _merge_from_records(result, matched)
         details: dict = {}
         try:
@@ -662,6 +739,16 @@ async def enrich_result(
                 matched.append(evidence)
         except Exception:
             logger.exception("impressum enrichment failed for %s", query.query_id)
+        # Registry backfill: an entity identified by name (e.g. via SEC/Wikidata)
+        # but with no official number — re-query GLEIF by the FULL registered
+        # name to grab its registeredAs (GLEIF's search misses the US flagship on
+        # a one-word query but finds it on the full name, e.g. Palantir).
+        if not result.registry_id and result.confidence >= 0.7:
+            try:
+                result = await _gleif_name_backfill(result, query, run_id)
+            except Exception:
+                logger.exception("gleif name backfill failed for %s", query.query_id)
+
         # Web fill only for confidently identified entities: enriching the
         # wrong company is worse than returning blanks. Opt-out for fast batches
         # (it's the main per-row LLM latency cost) — like MCP's owner-lookup flag.

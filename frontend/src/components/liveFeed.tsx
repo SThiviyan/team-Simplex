@@ -90,7 +90,13 @@ export function useLiveRun(active: boolean): PipelineEvent[] {
       const feed = await runEvents(latest.run_id, lastSeq.current);
       if (feed.events.length) {
         lastSeq.current = feed.last_seq;
-        setEvents((prev) => [...prev, ...feed.events].slice(-300));
+        // Defensive dedupe by seq, so a re-fetch can never double the feed.
+        setEvents((prev) => {
+          const seen = new Set(prev.map((e) => e.seq));
+          const merged = [...prev];
+          for (const e of feed.events) if (!seen.has(e.seq)) merged.push(e);
+          return merged.slice(-300);
+        });
       }
     } catch {
       /* best-effort */

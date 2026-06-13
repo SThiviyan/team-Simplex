@@ -81,13 +81,13 @@ export function buildStages(events: PipelineEvent[]): {
   for (const id of STAGE_ORDER) {
     map.set(id, { id, label: STAGE_LABEL[id], state: 'pending', count: 0 });
   }
-  const trajectory: { label: string; confidence: number }[] = [];
-  const contradictions: Contradiction[] = [];
+  const lastByStage = new Map<string, number>();
+  const contraByField = new Map<string, Contradiction>();
 
   for (const e of events) {
     if (e.event_type === 'contradiction') {
       const p = e.payload as Record<string, any>;
-      contradictions.push({ field: p.field, values: p.values ?? [] });
+      contraByField.set(p.field, { field: p.field, values: p.values ?? [] });
     }
     const id = EVENT_STAGE[e.event_type];
     if (!id) continue;
@@ -116,14 +116,11 @@ export function buildStages(events: PipelineEvent[]): {
     }
     if (typeof p.confidence === 'number') {
       st.confidence = p.confidence;
-      const labels: Record<string, string> = {
-        agent_answer: 'agent',
-        eval_result: 'matcher',
-        enrichment_done: 'final',
-      };
-      if (labels[e.event_type]) {
-        trajectory.push({ label: labels[e.event_type], confidence: p.confidence });
-      }
+      const label = TRAJECTORY_LABEL[e.event_type];
+      // Keep only the LATEST confidence per stage (the agent / matcher can fire
+      // many times over a multi-round resolution — show one point each, not one
+      // per event).
+      if (label) lastByStage.set(label, p.confidence);
     }
   }
 
@@ -133,8 +130,23 @@ export function buildStages(events: PipelineEvent[]): {
     if (st.state === 'pending' && i < lastDone) st.state = 'skipped';
     if (st.state === 'pending' && i === lastDone + 1) st.state = 'active';
   });
-  return { stages: STAGE_ORDER.map((id) => map.get(id)!), trajectory, contradictions };
+  const trajectory = TRAJECTORY_ORDER.filter((l) => lastByStage.has(l)).map((l) => ({
+    label: l,
+    confidence: lastByStage.get(l)!,
+  }));
+  return {
+    stages: STAGE_ORDER.map((id) => map.get(id)!),
+    trajectory,
+    contradictions: [...contraByField.values()],
+  };
 }
+
+const TRAJECTORY_LABEL: Record<string, string> = {
+  agent_answer: 'agent',
+  eval_result: 'matcher',
+  enrichment_done: 'final',
+};
+const TRAJECTORY_ORDER = ['agent', 'matcher', 'final'];
 
 export function FlowGraph({ events }: { events: PipelineEvent[] }) {
   const { stages, trajectory, contradictions } = buildStages(events);
