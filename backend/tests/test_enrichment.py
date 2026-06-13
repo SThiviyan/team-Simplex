@@ -85,8 +85,12 @@ def test_confidence_flags():
     assert _confidence_flag(_row(registry_id="123"), recs[:1]) == FLAG_PROBABLE
 
 
-def test_merge_prefers_registry_over_gleif():
-    row = _row(registry_id="HRB 1", name_normalized_register_name="Acme GmbH")
+def test_merge_fills_by_hierarchy_and_blanks_on_conflict():
+    # Same entity, two sources. The registry (handelsregister) outranks GLEIF for
+    # DE. Their addresses DIFFER -> per the conflict rule the field is left blank
+    # (no timestamps to break the tie). Fields only one source has are filled.
+    row = _row(registry_id="HRB 1", name_normalized_register_name="Acme GmbH",
+               jurisdiction_confirmed="DE")
     records = [
         _record(registry_id="HRB 1", provider="gleif", address="GLEIF St 1, Berlin, DE",
                 organization_type="GMBH"),
@@ -94,16 +98,46 @@ def test_merge_prefers_registry_over_gleif():
                 address="Registry Str 2, 10115, Berlin, DE", status="aktuell"),
         # A DIFFERENT entity's record must not leak in.
         _record(registry_id="HRB 999", provider="handelsregister",
-                name_normalized_register_name="Other AG",
-                incorporation_date="01.01.1990"),
+                name_normalized_register_name="Other AG", incorporation_date="01.01.1990"),
     ]
     matched = matching_records(row, records)
     assert all(r["registry_id"] != "HRB 999" for r in matched)
+    # Hierarchy: handelsregister ranks before gleif for DE.
+    assert [r["provider"] for r in matched] == ["handelsregister", "gleif"]
     merged = _merge_from_records(row, matched)
-    assert merged.registered_address == "Registry Str 2, 10115, Berlin, DE"  # registry beats gleif
-    assert merged.status == "active"
-    assert merged.organization_type == "GMBH"  # gleif fills what the registry lacked
-    assert merged.incorporation_date is None   # other entity's date NOT leaked
+    assert merged.registered_address is None          # conflicting addresses -> blank
+    assert merged.status == "active"                  # only registry had it
+    assert merged.organization_type == "GMBH"         # only gleif had it
+    assert merged.incorporation_date is None          # other entity's date NOT leaked
+
+
+def test_merge_agreement_uses_top_ranked_value():
+    # When sources AGREE (after normalization) the top-ranked raw value wins.
+    row = _row(registry_id="HRB 1", name_normalized_register_name="Acme GmbH",
+               jurisdiction_confirmed="DE")
+    records = [
+        _record(registry_id="HRB 1", provider="gleif", address="Hauptstr 1, 10115 Berlin, DE",
+                organization_type="GmbH"),
+        _record(registry_id="HRB 1", provider="handelsregister",
+                address="Hauptstr 1, 10115, Berlin, DE",  # same address, different formatting
+                organization_type="Gesellschaft mit beschränkter Haftung"),
+    ]
+    merged = _merge_from_records(row, matching_records(row, records))
+    # Same address (formatting-only diff) -> filled from the top source (registry).
+    assert merged.registered_address == "Hauptstr 1, 10115, Berlin, DE"
+    # GmbH == "Gesellschaft mit beschränkter Haftung" -> not a conflict; registry wins.
+    assert merged.organization_type == "Gesellschaft mit beschränkter Haftung"
+
+
+def test_merge_newer_timestamp_breaks_status_conflict():
+    from app.pipeline.enrichment import resolve_conflict
+
+    # Conflicting values, both timestamped -> newest wins.
+    assert resolve_conflict([("active", "2020-01-01"), ("dissolved", "2024-01-01")]) == "dissolved"
+    # Conflicting, no timestamps -> blank.
+    assert resolve_conflict([("active", None), ("dissolved", None)]) is None
+    # Unanimous -> the (top-ranked, first) value.
+    assert resolve_conflict([("active", None), ("active", "2024-01-01")]) == "active"
 
 
 def test_matching_records_tolerates_leading_zeros():
@@ -234,3 +268,27 @@ def test_german_court_collapses_to_amtsgericht_city():
     assert n("DE", "Amtsgericht München") == "Amtsgericht München"  # already canonical
     # Non-DE jurisdictions are left alone.
     assert n("PL", "SĄD REJONOWY DLA M.ST. WARSZAWY") == "SĄD REJONOWY DLA M.ST. WARSZAWY"
+
+
+def test_source_ranking_foundation_and_order():
+    from app.search.source_ranking import (
+        is_foundation_source,
+        order_records,
+        ranked_sources,
+        rank_of,
+    )
+
+    # Foundation = registry-bearing; Wikidata is fill-only, never a foundation.
+    assert is_foundation_source("handelsregister") and is_foundation_source("gleif")
+    assert not is_foundation_source("wikidata")
+
+    # National register outranks GLEIF outranks Wikidata.
+    assert rank_of("DE", "handelsregister") < rank_of("DE", "gleif") < rank_of("DE", "wikidata")
+    assert ranked_sources("NL")[0] == "kvk"  # pinned
+    # Unlisted country auto-derives [<national>, gleif, wikidata].
+    assert ranked_sources("CH") == ["gleif", "wikidata"]
+
+    recs = [{"provider": "wikidata"}, {"provider": "gleif"}, {"provider": "handelsregister"}]
+    assert [r["provider"] for r in order_records(recs, "DE")] == [
+        "handelsregister", "gleif", "wikidata",
+    ]

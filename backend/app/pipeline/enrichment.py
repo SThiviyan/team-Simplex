@@ -31,6 +31,7 @@ from app.config import settings
 from app.pipeline import event_log
 from app.pipeline.models import EnrichmentPayload, ExtractionResult, QueryRow
 from app.search.base import normalize_country
+from app.search.source_ranking import order_records
 
 logger = logging.getLogger(__name__)
 
@@ -127,27 +128,23 @@ def _registry_provider_names() -> frozenset[str]:
     return frozenset(p.name for p in all_providers() if p.jurisdictions is not None)
 
 
-def _authority(provider: str | None) -> int:
-    """Merge priority: national register (0) > GLEIF (1) > everything else (2)."""
-    if provider in _registry_provider_names():
-        return 0
-    if provider == "gleif":
-        return 1
-    return 2
-
-
 def matching_records(result: ExtractionResult, records: list[dict]) -> list[dict]:
-    """Gathered records that are evidence about the WINNING entity, most
-    authoritative first. Matching by registry number or registered name keeps
-    other candidates' data from leaking into the wrong row."""
+    """Gathered records that are evidence about the WINNING entity, ordered by
+    the country's source hierarchy (foundation/registry first, Wikidata last).
+    Matching by registry number or registered name keeps other candidates' data
+    from leaking into the wrong row."""
     matched = [
         r
         for r in records
         if _ids_match(result.registry_id, r.get("registry_id"))
         or names_agree(result.name_normalized_register_name, r.get("name_normalized_register_name"))
     ]
-    matched.sort(key=lambda r: _authority(r.get("provider")))
-    return matched
+    # Rank by the confirmed country; if the row hasn't confirmed one yet, infer
+    # it from the matched records (a handelsregister record is DE, etc.).
+    country = result.jurisdiction_confirmed or next(
+        (r.get("jurisdiction_confirmed") for r in matched if r.get("jurisdiction_confirmed")), None
+    )
+    return order_records(matched, country)
 
 
 def most_recent_date(*candidates: str | None) -> str | None:
@@ -161,47 +158,122 @@ def most_recent_date(*candidates: str | None) -> str | None:
     return max(dates) if dates else None
 
 
-def _merge_from_records(result: ExtractionResult, matched: list[dict]) -> ExtractionResult:
-    """Pass 1: merge the gathered evidence, best source first.
+# --- categorical-field normalizers (for conflict detection) -----------------
 
-    Two rules beyond fill-if-empty:
-    - The NATIONAL REGISTER is authoritative for incorporation_date,
-      organization_type and registry_court: its value replaces whatever an
-      agent answer or aggregator put there (Wikidata legal forms are English
-      glosses; its inception is the brand's founding, not the incorporation).
-    - Date conflicts between non-registry sources resolve to the MOST RECENT
-      candidate (founding < incorporation < re-registration).
+_LEGAL_FORM_SYNONYMS = {
+    "gmbh": "gmbh", "gesellschaft mit beschrankter haftung": "gmbh",
+    "ag": "ag", "aktiengesellschaft": "ag",
+    "ug": "ug", "unternehmergesellschaft": "ug", "unternehmergesellschaft haftungsbeschrankt": "ug",
+    "ek": "ek", "eingetragener kaufmann": "ek",
+    "ltd": "ltd", "limited": "ltd", "private company limited by shares": "ltd",
+    "ltd.": "ltd",
+    "plc": "plc", "public limited company": "plc",
+    "bv": "bv", "b.v.": "bv", "besloten vennootschap": "bv",
+    "sarl": "sarl", "s.a r.l.": "sarl", "s.a.r.l.": "sarl",
+    "sa": "sa", "s.a.": "sa", "societe anonyme": "sa",
+    "srl": "srl", "s.r.l.": "srl",
+    "sas": "sas",
+}
+
+
+def _legal_form_key(value: str | None) -> str | None:
+    if not value:
+        return None
+    k = re.sub(r"[^a-z0-9 ]", "", _ascii_fold(value).lower()).strip()
+    return _LEGAL_FORM_SYNONYMS.get(k, k) or None
+
+
+def _ascii_fold(value: str) -> str:
+    import unicodedata
+
+    return unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+
+
+def resolve_conflict(values: list[tuple[str, str | None]]) -> str | None:
+    """Apply the source-hierarchy conflict rule to a rank-ordered list of
+    (raw_value, data_timestamp) for one field.
+
+    - All non-null values agree (after normalization, done by the caller) ->
+      the top-ranked raw value wins (hierarchy fills top-down).
+    - They disagree -> the field is LEFT BLANK, UNLESS the conflicting values
+      both carry a data timestamp, in which case the newest wins.
+    """
+    present = [(raw, ts) for raw, ts in values if raw]
+    if not present:
+        return None
+    raws = {raw for raw, _ in present}
+    if len(raws) == 1:
+        return present[0][0]  # unanimous -> top-ranked (caller passed in order)
+    timestamped = [(raw, ts) for raw, ts in present if ts]
+    if len({raw for raw, _ in timestamped}) > 1:
+        return max(timestamped, key=lambda x: x[1])[0]  # conflicting + dated -> newest
+    return None  # genuine conflict, no timestamps to break it -> blank
+
+
+def _merge_from_records(result: ExtractionResult, matched: list[dict]) -> ExtractionResult:
+    """Fill the table top-down by the country's source hierarchy.
+
+    `matched` is already ordered foundation-first. For each field we take the
+    highest-ranked source's value; on a genuine cross-source CONFLICT the field
+    is left blank unless data timestamps let the newer value win
+    (resolve_conflict). incorporation_date keeps the domain rule that the most
+    recent date wins (founding < incorporation). Fields already set on `result`
+    (from the Layer-1 agent) are preserved.
     """
     updates: dict = {}
-    registry_dates: list[str | None] = []
-    other_dates: list[str | None] = [result.incorporation_date]
-    for record in matched:
-        from_registry = _authority(record.get("provider")) == 0
-        (registry_dates if from_registry else other_dates).append(
-            record.get("incorporation_date")
-        )
-        # Registry overrides for the fields it is authoritative on.
-        if from_registry:
-            for field, key in (
-                ("organization_type", "organization_type"),
-                ("registry_court", "registry_court"),
-            ):
-                if record.get(key) and field not in updates:
-                    updates[field] = record[key]
-        # Everything else: fill only what is still empty, best authority first.
-        candidates = {
-            "registered_address": record.get("address"),
-            "organization_type": record.get("organization_type"),
-            "status": normalize_status(record.get("status")),
-        }
-        for field, value in candidates.items():
-            if value and not getattr(result, field) and field not in updates:
-                updates[field] = value
 
-    date = most_recent_date(*registry_dates) or most_recent_date(*other_dates)
+    # Categorical fields: resolve by hierarchy + conflict rule on normalized
+    # values. `canonical` fields (status) store the normalized value; the rest
+    # keep the source's raw form. Tuple: (field, record key, normalizer, canonical).
+    field_specs = (
+        ("organization_type", "organization_type", _legal_form_key, False),
+        ("status", "status", normalize_status, True),
+        ("registered_address", "address", _address_key, False),
+        ("registry_court", "registry_court",
+         lambda v: _ascii_fold(v or "").lower().strip() or None, False),
+        ("officers", "officers", lambda v: _ascii_fold(v or "").lower().strip() or None, False),
+    )
+    for field, key, normalize, canonical in field_specs:
+        # Group raw values by normalized key, keeping rank order; collapse
+        # format-only differences so they don't read as conflicts.
+        by_norm: dict[str, tuple[str, str | None]] = {}
+        for r in matched:
+            raw = r.get(key)
+            norm = normalize(raw)
+            if norm and norm not in by_norm:
+                by_norm[norm] = (norm if canonical else raw, r.get("last_update"))
+        if not by_norm:
+            continue  # no source data for this field — keep the agent's value
+        resolved = resolve_conflict(list(by_norm.values()))
+        if resolved:
+            # Hierarchy (or newest on a dated conflict) fills/overrides.
+            updates[field] = resolved
+        elif not getattr(result, field):
+            # Unresolved conflict and the agent had nothing: stay blank. (We do
+            # NOT erase a value the agent already grounded.)
+            pass
+
+    # incorporation_date: most-recent date across all matched records + any
+    # value the agent already had (deterministic conflict resolution — the
+    # entity's incorporation is later than the brand's founding — so this field
+    # is never blanked on date disagreement).
+    date = most_recent_date(
+        result.incorporation_date, *[r.get("incorporation_date") for r in matched]
+    )
     if date and date != result.incorporation_date:
         updates["incorporation_date"] = date
+
     return result.model_copy(update=updates) if updates else result
+
+
+def _address_key(value: str | None) -> str | None:
+    """Loose address fingerprint: the set of alphanumeric tokens >= 2 chars, so
+    formatting-only differences ('Hamilton, BM' vs 'Hamilton BM') agree while
+    genuinely different addresses conflict."""
+    if not value:
+        return None
+    tokens = re.findall(r"[a-z0-9]{2,}", _ascii_fold(value).lower())
+    return " ".join(sorted(set(tokens))) or None
 
 
 def _missing_fields(result: ExtractionResult) -> list[str]:

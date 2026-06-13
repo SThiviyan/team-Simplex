@@ -781,3 +781,33 @@ def test_extract_payload_picks_validating_block_over_fragment():
     # No block validates -> None, never a fragment.
     resp2 = SimpleNamespace(content=[block("just prose"), block(": null,")])
     assert _extract_payload(resp2) is None
+
+
+def test_deterministic_fastpath_only_on_unambiguous_registry_match():
+    from app.pipeline.agent import deterministic_foundation
+    from app.pipeline.models import QueryRow
+
+    q = QueryRow(query_id="t", name="Agualeve", jurisdiction="DE")
+    reg = {
+        "registry_id": "HRB 247216", "registry_court": "Amtsgericht München",
+        "name_normalized_register_name": "Agualeve GmbH", "jurisdiction_confirmed": "DE",
+        "provider": "handelsregister", "source": "x", "address": "Grünwald",
+        "incorporation_date": "2019-02-20", "organization_type": "GmbH", "status": "active",
+    }
+    # Clean single registry hit -> deterministic payload (no LLM).
+    p = deterministic_foundation(q, [reg])
+    assert p is not None and p.registry_id == "HRB 247216" and p.confidence == 0.9
+
+    # Two distinct entities both matching -> fall through (None).
+    other = {**reg, "registry_id": "HRB 999",
+             "name_normalized_register_name": "Agualeve Holding GmbH"}
+    assert deterministic_foundation(q, [reg, other]) is None
+
+    # Wikidata-only (no foundation, no registry_id) -> None.
+    wiki = {"registry_id": None, "name_normalized_register_name": "Agualeve",
+            "jurisdiction_confirmed": "DE", "provider": "wikidata"}
+    assert deterministic_foundation(q, [wiki]) is None
+
+    # Wrong jurisdiction -> None.
+    q_fr = QueryRow(query_id="t", name="Agualeve", jurisdiction="FR")
+    assert deterministic_foundation(q_fr, [reg]) is None

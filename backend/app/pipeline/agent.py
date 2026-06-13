@@ -359,6 +359,67 @@ def apply_grounding(
 
 
 PREGATHER_TOOL = "search_companies"
+# A pre-gathered registry hit this close to the query name (token-set ratio),
+# with exactly one distinct entity, is taken deterministically — no Opus call.
+FASTPATH_NAME_SCORE = 95
+
+
+def deterministic_foundation(query: QueryRow, records: list[dict]) -> ExtractionPayload | None:
+    """Skip the LLM when the pre-gathered records already pin the answer.
+
+    Returns a payload iff a FOUNDATION source (registry/GLEIF, never Wikidata)
+    returned a record whose registered name matches the query closely AND no
+    other distinct entity matches comparably — i.e. an unambiguous single hit in
+    the right jurisdiction. Anything fuzzy, ambiguous, or needing reformulation
+    falls through to the agent. The registry_id is straight from a tool result,
+    so it passes grounding unchanged."""
+    from rapidfuzz import fuzz
+
+    from app.search.base import normalize_country
+    from app.search.source_ranking import is_foundation_source, order_records
+
+    def cc(value: str | None) -> str | None:
+        base = (value or "").strip().upper().split("-")[0]
+        return normalize_country(base) if base else None
+
+    want = cc(query.jurisdiction)
+    strong: list[dict] = []
+    for r in records:
+        if not r.get("registry_id") or not is_foundation_source(r.get("provider")):
+            continue
+        name = r.get("name_normalized_register_name")
+        if not name:
+            continue
+        if want and cc(r.get("jurisdiction_confirmed")) not in (None, want):
+            continue  # wrong jurisdiction
+        if fuzz.token_set_ratio(query.name.lower(), name.lower()) >= FASTPATH_NAME_SCORE:
+            strong.append(r)
+    if not strong:
+        return None
+    distinct = {_ALNUM.sub("", (r["registry_id"] or "").lower()).lstrip("0") for r in strong}
+    if len(distinct) != 1:
+        return None  # two different entities match equally — let the agent decide
+
+    # Among same-entity records, the source hierarchy picks the foundation row.
+    rid = next(iter(distinct))
+    same = [r for r in records if _ALNUM.sub("", (r.get("registry_id") or "").lower()).lstrip("0") == rid]
+    f = order_records(same, want)[0]
+    return ExtractionPayload(
+        registry_id=f.get("registry_id"),
+        registry_court=f.get("registry_court"),
+        name_normalized_register_name=f.get("name_normalized_register_name"),
+        jurisdiction_confirmed=f.get("jurisdiction_confirmed") or want,
+        confidence=0.9,
+        source=f.get("source"),
+        no_match_reason=None,
+        registered_address=f.get("address"),
+        incorporation_date=f.get("incorporation_date"),
+        organization_type=f.get("organization_type"),
+        status=f.get("status"),
+        officers=None,
+        reasoning="Single unambiguous registry match in the pre-gathered results "
+        "(no LLM needed).",
+    )
 
 
 async def _pregather(session, query, entry, outcome, run_id, tools) -> str | None:
@@ -405,6 +466,15 @@ async def _mcp_attempt(
             endpoint=entry.url, server=entry.name, tools=[t["name"] for t in tools],
         )
         pregathered = await _pregather(session, query, entry, outcome, run_id, tools)
+        # Fast path: if the pre-gathered records already pin one unambiguous
+        # registry entry, take it and skip the Opus tool-loop entirely.
+        fast = deterministic_foundation(query, outcome.records)
+        if fast is not None:
+            await event_log.log_event(
+                run_id, "fastpath_match", query.query_id,
+                registry_id=fast.registry_id, endpoint=entry.url,
+            )
+            return fast
         user = _user_prompt(query, f"MCP server '{entry.name}'")
         if pregathered is not None:
             user += (
