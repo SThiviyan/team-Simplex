@@ -41,9 +41,21 @@ def read_queries_text(text: str) -> list[QueryRow]:
     ]
 
 
+def decode_csv_bytes(raw: bytes) -> str:
+    """Decode an uploaded CSV tolerantly. Excel exports come in several
+    encodings: UTF-8 (with/without BOM) and, on German/Western Windows,
+    cp1252 — which has bytes (e.g. 0x9f, 0x8a) that are invalid UTF-8. Try the
+    likely encodings in order; latin-1 is the last resort (it never errors)."""
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("latin-1", errors="replace")
+
+
 def read_queries(path: Path = QUERIES_CSV) -> list[QueryRow]:
-    # utf-8-sig strips the BOM that Excel prepends to exported CSVs.
-    return read_queries_text(path.read_text(encoding="utf-8-sig"))
+    return read_queries_text(decode_csv_bytes(path.read_bytes()))
 
 
 def write_results(results: list[ExtractionResult], output_dir: Path = OUTPUT_DIR) -> Path:

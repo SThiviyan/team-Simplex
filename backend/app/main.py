@@ -231,11 +231,11 @@ async def pipeline_run_csv(file: UploadFile) -> FileResponse:
     Delimiter (comma/semicolon) is auto-detected; the response is the finished
     comma-delimited result CSV as a file download.
     """
-    from app.pipeline.csv_io import read_queries_text
+    from app.pipeline.csv_io import decode_csv_bytes, read_queries_text
     from app.pipeline.runner import run_pipeline
 
     _require_pipeline_ready()
-    text = (await file.read()).decode("utf-8-sig")
+    text = decode_csv_bytes(await file.read())
     queries = read_queries_text(text)
     if not queries:
         raise HTTPException(
