@@ -29,6 +29,7 @@ from app.search.providers.gleif import GleifSearchProvider
 from app.search.providers.handelsregister import HandelsregisterSearchProvider
 from app.search.providers.krs_pl import KrsPlSearchProvider
 from app.search.providers.kvk_nl import KvkNlSearchProvider
+from app.search.providers.lindas import LindasSearchProvider
 from app.search.providers.northdata import NorthDataSearchProvider
 from app.search.providers.nzbn import NzbnSearchProvider
 from app.search.providers.orgbook_ca import OrgbookCaSearchProvider
@@ -70,7 +71,8 @@ def all_providers() -> list[SearchProvider]:
         KrsPlSearchProvider(),  # PL — KRS (keyless, api-krs.ms.gov.pl)
         BrasilSearchProvider(),  # BR — CNPJ (keyless, brasilapi.com.br)
         GbizInfoSearchProvider(),  # JP — gBizINFO (keyed free token; self-disables)
-        ZefixSearchProvider(),  # CH — Zefix (keyed free registration; self-disables)
+        LindasSearchProvider(),  # CH — Zefix register via LINDAS SPARQL (keyless)
+        ZefixSearchProvider(),  # CH — Zefix REST (keyed free registration; self-disables)
         # --- Apify actor-backed (premium; all self-disable without APIFY_API_KEY
         # + APIFY_ENABLED). NorthData is the keyed path to DE/AT/CH register data
         # that bypasses handelsregister.de's IP block. -----------------------

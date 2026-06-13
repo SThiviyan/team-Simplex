@@ -40,7 +40,7 @@
   "JP": ["gbizinfo", "apify_jp_gbiz", "gleif", "wikidata"],
 
   "AT": ["northdata", "gleif", "wikidata"],
-  "CH": ["zefix", "northdata", "gleif", "wikidata"],
+  "CH": ["lindas", "zefix", "northdata", "gleif", "wikidata"],
   "ES": ["apify_es", "gleif", "wikidata"],
   "IT": ["gleif", "wikidata"],
   "LU": ["gleif", "wikidata"],

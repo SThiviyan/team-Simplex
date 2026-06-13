@@ -361,7 +361,7 @@ def test_source_ranking_foundation_and_order():
     # National register outranks GLEIF outranks Wikidata.
     assert rank_of("DE", "handelsregister") < rank_of("DE", "gleif") < rank_of("DE", "wikidata")
     assert ranked_sources("NL")[0] == "kvk"  # pinned
-    assert ranked_sources("CH")[0] == "zefix"  # pinned (CH register added)
+    assert ranked_sources("CH")[0] == "lindas"  # pinned (keyless CH register via LINDAS)
     # A country with no pin and no national provider auto-derives [gleif, wikidata].
     assert ranked_sources("ZZ") == ["gleif", "wikidata"]
 
