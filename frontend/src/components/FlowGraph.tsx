@@ -240,9 +240,17 @@ function StageNode({ stage, maxCount }: { stage: Stage; maxCount: number }) {
   const shownConf = stage.emphasis && stage.displayConfidence !== undefined
     ? stage.displayConfidence
     : stage.confidence;
-  // Emphasised outcome node is drawn at full size and a thicker ring so it
-  // reads as "the winner" even when it's Match (no Enrich/Winner result).
-  const size = stage.emphasis ? SIZE_MAX : active ? sizeFor(Math.max(stage.count, 1), maxCount) : SIZE_MIN;
+  // The outcome is "finalised" once we know the calibrated score; until then the
+  // run is still processing.
+  const emphasisFinal = stage.emphasis && stage.displayConfidence !== undefined;
+  // Emphasised outcome node: a bit bigger + thicker ring so it reads as the
+  // endpoint, but not oversized.
+  const EMPHASIS_SIZE = 58;
+  const size = stage.emphasis
+    ? EMPHASIS_SIZE
+    : active
+      ? sizeFor(Math.max(stage.count, 1), maxCount)
+      : SIZE_MIN;
   const ring =
     stage.state === 'pending'
       ? GRAY
@@ -286,14 +294,21 @@ function StageNode({ stage, maxCount }: { stage: Stage; maxCount: number }) {
         </div>
       </div>
       <span
-        className={`w-full truncate text-center text-[11px] leading-tight ${
-          stage.emphasis ? 'font-semibold text-accent' : dim ? 'font-medium text-muted' : 'font-medium text-ink'
+        className={`w-full truncate text-center text-[11px] leading-tight font-medium ${
+          stage.emphasis
+            ? 'font-semibold ' + (emphasisFinal ? '' : 'text-ink') // black while processing
+            : dim
+              ? 'text-muted'
+              : 'text-ink'
         }`}
+        // Once finalised, the label color matches the circle's ring (the
+        // confidence color), so green at 95% reads green, not red.
+        style={emphasisFinal ? { color: ring } : undefined}
       >
         {stage.label}
       </span>
       <span className="-mt-1 w-full truncate text-center text-[9px] leading-tight text-muted">
-        {stage.emphasis ? 'winner' : stage.detail || ''}
+        {emphasisFinal ? 'winner' : stage.emphasis ? '' : stage.detail || ''}
       </span>
     </div>
   );
