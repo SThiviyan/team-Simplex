@@ -267,6 +267,13 @@ function WinnerCard({
         </span>
       </div>
 
+      {winner.retried_query ? (
+        <p className="rounded-md bg-accent-soft/40 px-2.5 py-1.5 text-[11px] text-muted">
+          Original query was inconclusive — found by re-querying as{' '}
+          <span className="font-medium text-ink">“{winner.retried_query}”</span>.
+        </p>
+      ) : null}
+
       <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 text-[13px] sm:grid-cols-2">
         <Field label="Jurisdiction" value={c.jurisdiction_confirmed} />
         <Field label="Organization type" value={c.organization_type} />

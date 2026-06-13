@@ -1,0 +1,9 @@
+# Brazil (BR) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by CNPJ (Receita Federal). No MCP endpoints exist, so
+# the agent does a domain-scoped scrape of each site and gives up / continues to
+# the next if a site yields nothing. The BrasilAPI CNPJ service is additionally
+# wired as a structured search provider (app/search/providers/brasil.py).
+rank;name;url;notes;kind
+1;receita-cnpj;https://solucoes.receita.fazenda.gov.br/servicos/cnpjreva/cnpjreva_solicitacao.asp;Receita Federal official CNPJ consultation;scrape
+2;cnpj-biz;https://cnpj.biz/;Open Brazilian company (CNPJ) name search;scrape
+3;casa-dos-dados;https://casadosdados.com.br/;Brazilian company name / CNPJ search;scrape

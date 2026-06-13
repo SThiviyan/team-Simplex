@@ -16,9 +16,31 @@ _COUNTRY_FILES = {
     "DE": "de.csv",
     "UK": "uk.csv",
     "GB": "uk.csv",
-    "US": "us.csv", 
-    "BR": "br.csv", 
-    "AT": "at.csv"
+    "US": "us.csv",
+    # South America — national registries scraped best-effort (no MCP endpoints).
+    "BR": "br.csv",
+    "AR": "ar.csv",
+    "CL": "cl.csv",
+    "CO": "co.csv",
+    "PE": "pe.csv",
+    # Asia — national registries scraped best-effort (no MCP endpoints).
+    "IN": "in.csv",
+    "CN": "cn.csv",
+    "JP": "jp.csv",
+    "KR": "kr.csv",
+    "SG": "sg.csv",
+    "HK": "hk.csv",
+    "TW": "tw.csv",
+    "ID": "id.csv",
+    # Europe — registries scraped best-effort for jurisdictions without a provider.
+    "ES": "es.csv",
+    "IT": "it.csv",
+    "SE": "se.csv",
+    "BE": "be.csv",
+    "AT": "at.csv",
+    "CH": "ch.csv",
+    "PT": "pt.csv",
+    "PL": "pl.csv",
 }
 _FALLBACK_FILE = "extra_eu.csv"
 

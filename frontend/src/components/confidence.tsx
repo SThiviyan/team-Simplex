@@ -114,6 +114,17 @@ export function confidenceSignals(rec: CompanyRecord): Signal[] {
       hint: 'Share of key registry attributes populated after merging duplicate records.',
     });
   }
+  // Conflicts resolved by cross-referencing duplicate records (e.g. two sources
+  // gave a different address); shows which value won the output and why.
+  for (const cf of rec._conflicts ?? []) {
+    s.push({
+      label: `Cross-referenced ${cf.field.replace(/_/g, ' ')}`,
+      value: cf.reason,
+      ok: true,
+      hint: `Sources disagreed on ${cf.field.replace(/_/g, ' ')}; "${cf.chosen}" was written `
+        + 'to the output after cross-referencing the gathered evidence.',
+    });
+  }
   return s;
 }
 

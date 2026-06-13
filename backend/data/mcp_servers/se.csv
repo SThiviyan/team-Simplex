@@ -1,0 +1,6 @@
+# Sweden (SE) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by Organisationsnummer and registered with
+# Bolagsverket. Best-effort scrape, give up and continue.
+rank;name;url;notes;kind
+1;bolagsverket;https://www.bolagsverket.se/;Bolagsverket company register;scrape
+2;allabolag;https://www.allabolag.se/;Swedish company name / org-number directory;scrape

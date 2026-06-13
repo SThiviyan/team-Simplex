@@ -1,0 +1,7 @@
+# Switzerland (CH) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by the UID (CHE-...) in the central business index
+# Zefix and the cantonal commercial registers. Best-effort scrape, give up and
+# continue.
+rank;name;url;notes;kind
+1;zefix;https://www.zefix.ch/;Zefix central business name index (UID);scrape
+2;moneyhouse;https://www.moneyhouse.ch/;Swiss company directory;scrape

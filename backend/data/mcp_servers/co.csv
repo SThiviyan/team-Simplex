@@ -1,0 +1,6 @@
+# Colombia (CO) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by NIT and registered via the chambers of commerce
+# (consolidated in RUES). Best-effort scrape, give up and continue.
+rank;name;url;notes;kind
+1;rues;https://www.rues.org.co/;Registro Único Empresarial y Social (RUES) name search;scrape
+2;dian;https://muisca.dian.gov.co/WebRutMuisca/DefConsultaEstadoRUT.faces;DIAN RUT taxpayer lookup;scrape

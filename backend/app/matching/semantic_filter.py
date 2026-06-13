@@ -41,6 +41,8 @@ from typing import Any
 
 import anthropic
 
+from app.matching.name_expansion import expand_abbreviations, normalized_equal
+
 logger = logging.getLogger(__name__)
 
 # Default to the most capable Claude model. Override per call if needed.
@@ -50,6 +52,11 @@ DEFAULT_MODEL = "claude-opus-4-8"
 NAME_FIELD = "name_normalized_register_name"
 JURISDICTION_FIELD = "jurisdiction_confirmed"
 CONFIDENCE_FIELD = "confidence"
+
+# A 'match' below this confidence is "low confidence" and is NEVER returned as a
+# result. Instead the chain tries one more query (recursive_search) or gives up
+# (no_match). 0.70 is the boundary of the prompt's own "strong match" band.
+MIN_MATCH_CONFIDENCE = 0.7
 
 # Possible decisions the model can return.
 DECISION_MATCH = "match"
@@ -96,6 +103,15 @@ Apply reasoning that pure string matching cannot:
      - 0.40-0.69: plausible but genuinely ambiguous.
      - 0.00-0.39: weak; likely not a real match.
 
+   CONFIDENCE FLOOR. Do NOT return "match" for a candidate you are not genuinely
+   confident about (below ~0.70). A weak/ambiguous best candidate must never be
+   returned as the answer. Instead, when your best candidate is below that floor,
+   prefer "recursive_search" with a query you judge MORE likely to surface the
+   right registry record than the original — but that you are still highly
+   confident denotes the SAME entity (e.g. expand the acronym / legal form, use
+   the native registered name). Use "no_match" only when you cannot offer such a
+   query.
+
    FAME / TIE-BREAKING. Each candidate has a `fame` count (`provider_count`
    distinct sources, `fame` total mentions) — how many independent registers
    returned it. When two or more candidates are otherwise comparable name
@@ -108,20 +124,35 @@ Apply reasoning that pure string matching cannot:
 
 5. RECURSIVE TRIGGERING. If NONE of the candidates is the right entity, STRONGLY
    prefer "recursive_search" over "no_match": whenever you can think of a more
-   promising query — an expanded acronym, the native-language registered name, a
-   corrected spelling, or the well-known full legal name — return
-   "recursive_search" with that name in `suggested_query` so the pipeline can
-   re-query the registry with it. Examples:
+   promising query, return "recursive_search" with that name in `suggested_query`
+   so the pipeline can re-query the registry with it.
+
+   The `suggested_query` MUST be a MEANINGFULLY DIFFERENT name — never echo the
+   input query verbatim (a name identical to the input would just loop and is
+   forbidden). Make a relevant, registry-oriented change; the most useful ones
+   are EXPANDING ABBREVIATIONS, both:
+     - in the company name itself — spell out acronyms and shortened words
+       (e.g. "BMW" -> "Bayerische Motoren Werke", "Intl" -> "International",
+       "Mfg" -> "Manufacturing", "&" -> "and"); and
+     - in the legal / organisation-type suffix — expand it to its full registered
+       form in the target jurisdiction WHEN that is likely how the register
+       spells it (e.g. "GmbH" -> "Gesellschaft mit beschränkter Haftung",
+       "Ltd" -> "Limited", "AG" -> "Aktiengesellschaft", "SARL" ->
+       "Société à Responsabilité Limitée").
+   Other valid changes: the native-language registered name or a corrected
+   spelling. Only keep an abbreviation when expanding it would HURT the match
+   (e.g. the registered name really is "DB Cargo AG"). Examples:
      - query "BMW", candidates all unrelated small firms
-       -> recursive_search, suggested_query "Bayerische Motoren Werke AG"
-     - query "Deutsche Bahn Cargo" with nothing matching
-       -> recursive_search, suggested_query "DB Cargo AG"
-   Use "no_match" ONLY when you genuinely have no better query to offer.
+       -> recursive_search, suggested_query "Bayerische Motoren Werke Aktiengesellschaft"
+     - query "Müller Intl GmbH", nothing matching
+       -> recursive_search, suggested_query "Müller International Gesellschaft mit beschränkter Haftung"
+   Use "no_match" ONLY when you genuinely have no better, DIFFERENT query to offer.
 
 6. ZERO CANDIDATES. The candidate list may be EMPTY (nothing survived the fuzzy
    filter). If you recognise the query as a real company, return
    "recursive_search" with its full registered legal name in the target
-   jurisdiction (native form, including the legal suffix). Otherwise "no_match".
+   jurisdiction (native form), expanding the query's abbreviations as in (5).
+   The suggestion must still differ from the input. Otherwise "no_match".
 
 Keep `reasoning` to ONE short sentence — it is diagnostic metadata, never shown
 as an answer. You MUST respond by calling the `submit_evaluation` tool exactly
@@ -143,10 +174,12 @@ EVALUATION_TOOL: dict[str, Any] = {
                 "type": "string",
                 "enum": [DECISION_MATCH, DECISION_NO_MATCH, DECISION_RECURSIVE],
                 "description": (
-                    "'match' if one candidate is the entity the user meant; "
-                    "'no_match' if none match and no useful expansion is known; "
-                    "'recursive_search' if the query is a known acronym/alias whose "
-                    "expansion is absent from the candidates."
+                    "'match' ONLY if one candidate is the entity the user meant AND "
+                    "you are confident (>= ~0.70); never 'match' a weak/ambiguous "
+                    "candidate. 'recursive_search' when a different, higher-recall "
+                    "same-entity query is more promising than the original (or the best "
+                    "candidate is below the confidence floor). 'no_match' if none match "
+                    "and no useful re-query is known."
                 ),
             },
             "winning_candidate_index": {
@@ -174,7 +207,10 @@ EVALUATION_TOOL: dict[str, Any] = {
                 "type": "string",
                 "description": (
                     "Only for 'recursive_search': the expanded company name to re-query "
-                    "the registry with (e.g. 'Bayerische Motoren Werke AG'). Empty otherwise."
+                    "the registry with. MUST differ from the input query (never identical) "
+                    "and should expand abbreviations in both the name and the legal/"
+                    "organisation-type suffix where fit (e.g. 'BMW' -> 'Bayerische Motoren "
+                    "Werke Aktiengesellschaft'). Empty otherwise."
                 ),
             },
             "deciding_references": {
@@ -405,6 +441,8 @@ def _assemble_result(
     tool_input: dict[str, Any],
     fuzz_candidates: list[dict[str, Any]],
     *,
+    query_name: str = "",
+    jurisdiction: str = "",
     consulted_references: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Map the validated tool input onto the final result (pure, no I/O).
@@ -451,6 +489,32 @@ def _assemble_result(
                 f"decision='match' but winning_candidate_index={idx!r} is out of "
                 f"range for {len(fuzz_candidates)} candidates."
             )
+        # A low-confidence candidate must NEVER be returned. Turn it into one more
+        # attempt: re-query with the original name's abbreviations expanded (a
+        # higher-recall query that is still the same entity, hence safe to link
+        # back with high confidence). If there's nothing to expand, give up with
+        # no_match rather than surface a weak guess.
+        if confidence < MIN_MATCH_CONFIDENCE:
+            expanded = expand_abbreviations(query_name, jurisdiction) if query_name else ""
+            if expanded and not normalized_equal(expanded, query_name):
+                result["decision"] = DECISION_RECURSIVE
+                result["recursive_search"] = {
+                    "suggested_query": expanded,
+                    # Same entity as the input (only abbreviations expanded), so we
+                    # can trust the link even though the candidate match was weak.
+                    "link_confidence": 0.95,
+                }
+                result["reasoning"] = (
+                    f"{reasoning} (best candidate below the {MIN_MATCH_CONFIDENCE:.0%} "
+                    "confidence floor; retrying with the expanded name)."
+                ).strip()
+                return result
+            result["decision"] = DECISION_NO_MATCH
+            result["reasoning"] = (
+                f"{reasoning} (best candidate below the {MIN_MATCH_CONFIDENCE:.0%} "
+                "confidence floor and no better query to try; not returned)."
+            ).strip()
+            return result
         # Return the record in the same shape as the input, with confidence updated.
         winning = dict(fuzz_candidates[idx])
         winning[CONFIDENCE_FIELD] = confidence
@@ -462,6 +526,26 @@ def _assemble_result(
             raise SemanticFilterError(
                 "decision='recursive_search' but no suggested_query was provided."
             )
+        # A recursive suggestion must be a *different* query — re-querying the
+        # same name would just loop. If the model echoed the input verbatim, try
+        # a deterministic abbreviation expansion (legal forms + common words); if
+        # even that changes nothing, there is no useful re-query, so downgrade to
+        # no_match instead of recommending an identical name.
+        if query_name and normalized_equal(suggested, query_name):
+            expanded = expand_abbreviations(query_name, jurisdiction)
+            if not normalized_equal(expanded, query_name):
+                suggested = expanded
+                result["reasoning"] = (
+                    f"{reasoning} (suggestion was identical to the query; expanded "
+                    "its abbreviations instead).".strip()
+                )
+            else:
+                result["decision"] = DECISION_NO_MATCH
+                result["reasoning"] = (
+                    f"{reasoning} (no recursive re-query: the proposed name was "
+                    "identical to the input and had no abbreviations to expand).".strip()
+                )
+                return result
         result["recursive_search"] = {"suggested_query": suggested}
 
     return result
@@ -631,7 +715,11 @@ def semantic_filter(
                 "tie resolved via web-search disambiguation (%d references)", len(tie_refs)
             )
             return _assemble_result(
-                tie_input, fuzz_candidates, consulted_references=tie_refs
+                tie_input,
+                fuzz_candidates,
+                query_name=user_query,
+                jurisdiction=target_jurisdiction,
+                consulted_references=tie_refs,
             )
 
     user_content = _build_user_content(
@@ -663,4 +751,9 @@ def semantic_filter(
 
     tool_input = _extract_tool_input(message)
     logger.debug("semantic_filter raw tool input: %s", tool_input)
-    return _assemble_result(tool_input, fuzz_candidates)
+    return _assemble_result(
+        tool_input,
+        fuzz_candidates,
+        query_name=user_query,
+        jurisdiction=target_jurisdiction,
+    )

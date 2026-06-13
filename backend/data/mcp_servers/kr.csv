@@ -1,0 +1,7 @@
+# South Korea (KR) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by the Business Registration Number / Corporate
+# Registration Number. Best-effort scrape, give up and continue.
+rank;name;url;notes;kind
+1;dart;https://dart.fss.or.kr/;Financial Supervisory Service DART disclosure / company search;scrape
+2;nts-bizno;https://www.nts.go.kr/;National Tax Service business registration lookup;scrape
+3;ftc;https://www.ftc.go.kr/;Fair Trade Commission business entity information;scrape

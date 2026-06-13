@@ -1,0 +1,6 @@
+# Belgium (BE) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by the enterprise number and held in the Crossroads
+# Bank for Enterprises (KBO / BCE). Best-effort scrape, give up and continue.
+rank;name;url;notes;kind
+1;kbo-bce;https://kbopub.economie.fgov.be/kbopub/zoekwoordenform.html;Crossroads Bank for Enterprises (KBO/BCE) public search;scrape
+2;companyweb;https://www.companyweb.be/;Belgian company directory;scrape

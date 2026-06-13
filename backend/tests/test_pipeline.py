@@ -44,9 +44,14 @@ def test_mcp_registry_country_mapping():
     assert [e.rank for e in de] == sorted(e.rank for e in de)
 
     assert get_mcp_servers("UK") == get_mcp_servers("GB")
-    # Unknown countries fall into the extra_eu bucket
-    assert get_mcp_servers("CH") == get_mcp_servers("US")
-    assert get_mcp_servers("CH")[0].name == "gleif-mcp"
+    # Unmapped countries fall into the extra_eu bucket.
+    assert get_mcp_servers("ZA")[0].name == "gleif-mcp"
+    # US has its own dedicated state-registry scrape list (not the extra_eu bucket).
+    us = get_mcp_servers("US")
+    assert us and us[0].name == "delaware-sos"
+    assert [e.rank for e in us] == sorted(e.rank for e in us)
+    assert all(e.kind == "scrape" for e in us)
+    assert get_mcp_servers("ZA") != us
 
 
 def test_placeholder_detection():

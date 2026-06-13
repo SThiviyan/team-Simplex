@@ -1,0 +1,6 @@
+# Singapore (SG) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by the UEN and registered with ACRA. Best-effort
+# scrape, give up and continue to the next source if one yields nothing.
+rank;name;url;notes;kind
+1;acra-bizfile;https://www.bizfile.gov.sg/;ACRA BizFile+ business entity search;scrape
+2;data-gov-sg;https://data.gov.sg/;Singapore open data ACRA entities datasets;scrape

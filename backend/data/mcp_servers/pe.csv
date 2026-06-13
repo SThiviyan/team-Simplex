@@ -1,0 +1,6 @@
+# Peru (PE) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by RUC (SUNAT). Best-effort scrape, give up and
+# continue to the next source if one yields nothing.
+rank;name;url;notes;kind
+1;sunat-ruc;https://e-consultaruc.sunat.gob.pe/cl-ti-itmrconsruc/jcrS00Alias;SUNAT RUC consultation;scrape
+2;universidadperu;https://www.universidadperu.com/empresas/;Peru company name directory;scrape

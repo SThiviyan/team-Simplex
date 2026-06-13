@@ -1,0 +1,7 @@
+# Argentina (AR) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by CUIT (AFIP). Best-effort scrape, give up and
+# continue to the next source if one yields nothing.
+rank;name;url;notes;kind
+1;afip-padron;https://www.afip.gob.ar/sitio/externos/default.asp;AFIP taxpayer / company padrón lookup;scrape
+2;cuit-online;https://www.cuitonline.com/;Argentina company / person CUIT name search;scrape
+3;igj;https://www.argentina.gob.ar/justicia/igj;Inspección General de Justicia corporate registry;scrape

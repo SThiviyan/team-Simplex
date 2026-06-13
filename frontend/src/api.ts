@@ -36,6 +36,18 @@ export type CompanyRecord = {
   _provider_count?: number;
   _providers?: string[];
   _completeness?: number;
+  // Field-level conflicts resolved by cross-referencing duplicate records
+  // (e.g. two sources disagreed on the address). The best-supported value was
+  // written into the field above; this records what was chosen and why.
+  _conflicts?: ResolvedConflict[];
+};
+
+// One attribute where same-entity records disagreed, plus how it was settled.
+export type ResolvedConflict = {
+  field: string;
+  chosen: string;
+  reason: string;
+  alternatives: { value: string; providers: string[]; authority: number; votes: number }[];
 };
 
 export type QueryRow = {
@@ -69,6 +81,9 @@ export type Winner = {
   // business register, VAT/LEI lookup, …). Empty unless web disambiguation ran.
   references?: Reference[];
   candidates: CompanyRecord[];
+  // Set when the original query was inconclusive and the result was found by
+  // automatically re-querying the registers with this refined (same-entity) name.
+  retried_query?: string | null;
 };
 
 export type CsvSearchResponse = {

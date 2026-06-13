@@ -27,6 +27,7 @@ from app.matching.company_matcher import (
     JURISDICTION_FIELD,
     NAME_FIELD,
 )
+from app.matching.conflict_resolution import Verifier, cross_reference
 from app.matching.token_weights import discriminative_core
 
 # Core-name similarity (0..100) above which two records are the same entity.
@@ -74,8 +75,16 @@ def _same_entity(a: dict[str, Any], b: dict[str, Any]) -> bool:
     return fuzz.token_sort_ratio(ca, cb) >= _SAME_ENTITY_SIM
 
 
-def _merge_group(group: list[dict[str, Any]]) -> dict[str, Any]:
-    """Merge same-entity records into the most complete one, filling gaps."""
+def _merge_group(
+    group: list[dict[str, Any]], *, verifier: Verifier | None = None
+) -> dict[str, Any]:
+    """Merge same-entity records into the most complete one.
+
+    Two passes: first fill empty fields from any record in the group, then
+    cross-reference the fields where records *disagree* (e.g. two different
+    addresses) and write the best-supported value — rather than letting the
+    most-complete record's value win by default. See ``conflict_resolution``.
+    """
     base = max(
         group,
         key=lambda r: (completeness(r), float(r.get(CONFIDENCE_FIELD) or 0.0)),
@@ -86,14 +95,22 @@ def _merge_group(group: list[dict[str, Any]]) -> dict[str, Any]:
             if not merged.get(field) and record.get(field):
                 merged[field] = record[field]
     merged[CONFIDENCE_FIELD] = max(float(r.get(CONFIDENCE_FIELD) or 0.0) for r in group)
+    # Resolve conflicting (non-empty but differing) fields by cross-referencing
+    # the gathered evidence; writes the winning value into `merged` in place.
+    cross_reference(group, merged, verifier=verifier)
     return merged
 
 
-def corroborate(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def corroborate(
+    records: list[dict[str, Any]], *, verifier: Verifier | None = None
+) -> list[dict[str, Any]]:
     """Cluster duplicate records (graph connected components); attach fame.
 
     Each returned record gains ``_fame`` (mentions), ``_provider_count``
     (distinct sources), ``_providers`` (their names), and ``_completeness``.
+    Conflicting attribute values within a cluster are cross-referenced and the
+    best-supported value is kept (with a ``_conflicts`` trail); pass ``verifier``
+    to add an external reverse lookup as a tie-breaker.
     """
     recs = [r for r in records if r.get(NAME_FIELD)]
     graph: nx.Graph = nx.Graph()
@@ -106,7 +123,7 @@ def corroborate(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged_records: list[dict[str, Any]] = []
     for component in nx.connected_components(graph):
         group = [recs[k] for k in component]
-        merged = _merge_group(group)
+        merged = _merge_group(group, verifier=verifier)
         providers = sorted({r.get("provider") for r in group if r.get("provider")})
         merged["_fame"] = len(group)
         merged["_providers"] = providers

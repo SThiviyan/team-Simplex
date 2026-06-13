@@ -1,0 +1,7 @@
+# China (CN) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by the Unified Social Credit Code (USCC). Best-effort
+# scrape, give up and continue if a source yields nothing.
+rank;name;url;notes;kind
+1;gsxt;https://www.gsxt.gov.cn/;National Enterprise Credit Information Publicity System (GSXT);scrape
+2;qcc;https://www.qcc.com/;Qichacha company name search;scrape
+3;tianyancha;https://www.tianyancha.com/;Tianyancha company name search;scrape

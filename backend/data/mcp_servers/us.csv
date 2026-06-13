@@ -1,0 +1,65 @@
+# Ranked list of US state business registries for jurisdiction US.
+#
+# The US has no single federal company register — companies are registered with
+# each STATE's Secretary of State (or equivalent). There are no MCP endpoints for
+# these, so every entry is kind=`scrape`: the agent does a best-effort, domain-
+# scoped web scrape of that state's registry website. If a state yields nothing
+# (the company isn't registered there, the site is down, or the scrape fails),
+# the agent gives up on it and continues to the next state — same non-fatal
+# philosophy as the federated search providers.
+#
+# Ranked by how commonly companies are registered there (Delaware first), then
+# alphabetically. The agent walks top to bottom and stops early once a state
+# yields a confident match.
+rank;name;url;notes;kind
+1;delaware-sos;https://icis.corp.delaware.gov/ecorp/entitysearch/NameSearch.aspx;Delaware Division of Corporations entity search;scrape
+2;california-sos;https://bizfileonline.sos.ca.gov/search/business;California Secretary of State bizfile business search;scrape
+3;new-york-sos;https://apps.dos.ny.gov/publicInquiry/;New York Dept. of State corporation & business entity search;scrape
+4;texas-sos;https://www.sos.state.tx.us/corp/sosda/;Texas Secretary of State SOSDirect business search;scrape
+5;florida-sos;https://search.sunbiz.org/Inquiry/CorporationSearch/ByName;Florida Division of Corporations (Sunbiz) search;scrape
+6;nevada-sos;https://esos.nv.gov/EntitySearch/OnlineEntitySearch;Nevada Secretary of State SilverFlume entity search;scrape
+7;wyoming-sos;https://wyobiz.wyo.gov/Business/FilingSearch.aspx;Wyoming Secretary of State business filing search;scrape
+8;alabama-sos;https://arc-sos.state.al.us/CGI/CORPNAME.MBR/INPUT;Alabama Secretary of State business entity search;scrape
+9;alaska-sos;https://www.commerce.alaska.gov/cbp/main/search/entities;Alaska Division of Corporations entity search;scrape
+10;arizona-cc;https://ecorp.azcc.gov/EntitySearch/Index;Arizona Corporation Commission entity search;scrape
+11;arkansas-sos;https://www.sos.arkansas.gov/corps/search_all.php;Arkansas Secretary of State business search;scrape
+12;colorado-sos;https://www.sos.state.co.us/biz/BusinessEntityCriteriaExt.do;Colorado Secretary of State business search;scrape
+13;connecticut-sots;https://service.ct.gov/business/s/onlinebusinesssearch;Connecticut Secretary of the State business search;scrape
+14;dc-dlcp;https://corponline.dcra.dc.gov/Home.aspx/Landing;District of Columbia CorpOnline business search;scrape
+15;georgia-sos;https://ecorp.sos.ga.gov/BusinessSearch;Georgia Secretary of State business search;scrape
+16;hawaii-dcca;https://hbe.ehawaii.gov/documents/search.html;Hawaii Business Express entity search;scrape
+17;idaho-sos;https://sosbiz.idaho.gov/search/business;Idaho Secretary of State business search;scrape
+18;illinois-sos;https://apps.ilsos.gov/businessentitysearch/;Illinois Secretary of State business entity search;scrape
+19;indiana-sos;https://bsd.sos.in.gov/publicbusinesssearch;Indiana Secretary of State business search;scrape
+20;iowa-sos;https://sos.iowa.gov/search/business/search.aspx;Iowa Secretary of State business entity search;scrape
+21;kansas-sos;https://www.kansas.gov/bess/flow/main;Kansas Secretary of State business entity search;scrape
+22;kentucky-sos;https://web.sos.ky.gov/bussearchnprofit/;Kentucky Secretary of State business search;scrape
+23;louisiana-sos;https://coraweb.sos.la.gov/CommercialSearch/CommercialSearch.aspx;Louisiana Secretary of State commercial search;scrape
+24;maine-sos;https://apps3.web.maine.gov/nei-sos-icrs/ICRS;Maine Secretary of State corporate name search;scrape
+25;maryland-sdat;https://egov.maryland.gov/businessexpress/entitysearch;Maryland Business Express entity search;scrape
+26;massachusetts-sec;https://corp.sec.state.ma.us/CorpWeb/CorpSearch/CorpSearch.aspx;Massachusetts Secretary of the Commonwealth corporate search;scrape
+27;michigan-lara;https://cofs.lara.state.mi.us/SearchApi/Search/Search;Michigan LARA business entity search;scrape
+28;minnesota-sos;https://mblsportal.sos.state.mn.us/Business/Search;Minnesota Secretary of State business search;scrape
+29;mississippi-sos;https://www.sos.ms.gov/business-services-search;Mississippi Secretary of State business search;scrape
+30;missouri-sos;https://bsd.sos.mo.gov/BusinessEntity/BESearch.aspx;Missouri Secretary of State business entity search;scrape
+31;montana-sos;https://biz.sosmt.gov/search/business;Montana Secretary of State business search;scrape
+32;nebraska-sos;https://www.nebraska.gov/sos/corp/corpsearch.cgi;Nebraska Secretary of State corporate search;scrape
+33;new-hampshire-sos;https://quickstart.sos.nh.gov/online/BusinessInquire;New Hampshire QuickStart business search;scrape
+34;new-jersey-treasury;https://www.njportal.com/DOR/BusinessNameSearch;New Jersey business name search;scrape
+35;new-mexico-sos;https://enterprise.sos.nm.gov/search;New Mexico Secretary of State business search;scrape
+36;north-carolina-sos;https://www.sosnc.gov/online_services/search/by_title/_Business_Registration;North Carolina Secretary of State business search;scrape
+37;north-dakota-sos;https://firststop.sos.nd.gov/search/business;North Dakota FirstStop business search;scrape
+38;ohio-sos;https://businesssearch.ohiosos.gov/;Ohio Secretary of State business search;scrape
+39;oklahoma-sos;https://www.sos.ok.gov/corp/corpInquiryFind.aspx;Oklahoma Secretary of State business entity search;scrape
+40;oregon-sos;https://egov.sos.state.or.us/br/pkg_web_name_srch_inq.login;Oregon Secretary of State business name search;scrape
+41;pennsylvania-dos;https://file.dos.pa.gov/search/business;Pennsylvania Dept. of State business search;scrape
+42;rhode-island-sos;https://business.sos.ri.gov/corpweb/corpsearch/corpsearch.aspx;Rhode Island Secretary of State corporate search;scrape
+43;south-carolina-sos;https://businessfilings.sc.gov/BusinessFiling/Entity/Search;South Carolina Secretary of State business search;scrape
+44;south-dakota-sos;https://sosenterprise.sd.gov/BusinessServices/Business/FilingSearch.aspx;South Dakota Secretary of State business search;scrape
+45;tennessee-sos;https://tncab.tnsos.gov/business-entity-search;Tennessee Secretary of State business entity search;scrape
+46;utah-commerce;https://secure.utah.gov/bes/;Utah Division of Corporations business entity search;scrape
+47;vermont-sos;https://bizfilings.vermont.gov/online/BusinessInquire;Vermont Secretary of State business search;scrape
+48;virginia-scc;https://cis.scc.virginia.gov/EntitySearch/Index;Virginia State Corporation Commission entity search;scrape
+49;washington-sos;https://ccfs.sos.wa.gov/#/;Washington Secretary of State corporations search;scrape
+50;west-virginia-sos;https://apps.sos.wv.gov/business/corporations/;West Virginia Secretary of State business search;scrape
+51;wisconsin-dfi;https://www.wdfi.org/apps/CorpSearch/Search.aspx;Wisconsin Dept. of Financial Institutions corporate search;scrape

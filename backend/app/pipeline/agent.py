@@ -78,36 +78,70 @@ def _extract_payload(response) -> ExtractionPayload:
     return ExtractionPayload.model_validate_json(text)
 
 
+_WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search"}
+
+
+def _via_label(mcp: McpServerEntry | None) -> str:
+    if mcp is None:
+        return "web search"
+    if mcp.kind == "scrape":
+        return f"a best-effort scrape of the {mcp.name} registry website ({mcp.url})"
+    return f"the MCP server '{mcp.name}'"
+
+
+async def _create_response(
+    client: anthropic.AsyncAnthropic,
+    messages: list[dict],
+    mcp: McpServerEntry | None,
+):
+    """Issue one model call wired to the right source for this attempt."""
+    if mcp is not None and mcp.kind == "scrape":
+        # Scrape a specific state registry SITE: web search scoped to its domain,
+        # so the model reads that state's register rather than the open web.
+        tool = dict(_WEB_SEARCH_TOOL)
+        if mcp.domain:
+            tool["allowed_domains"] = [mcp.domain]
+        return await client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=16000,
+            system=_SYSTEM,
+            messages=messages,
+            tools=[tool],
+            output_config={"format": _OUTPUT_FORMAT},
+        )
+    if mcp is not None:
+        return await client.beta.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=16000,
+            system=_SYSTEM,
+            messages=messages,
+            mcp_servers=[{"type": "url", "name": mcp.name, "url": mcp.url}],
+            output_config={"format": _OUTPUT_FORMAT},
+            betas=["mcp-client-2025-11-20"],
+        )
+    return await client.messages.create(
+        model=settings.anthropic_model,
+        max_tokens=16000,
+        system=_SYSTEM,
+        messages=messages,
+        tools=[_WEB_SEARCH_TOOL],
+        output_config={"format": _OUTPUT_FORMAT},
+    )
+
+
 async def _attempt(
     client: anthropic.AsyncAnthropic,
     query: QueryRow,
     *,
     mcp: McpServerEntry | None,
 ) -> ExtractionPayload | None:
-    """One extraction attempt — against a single MCP server, or web search if mcp is None."""
-    via = f"the MCP server '{mcp.name}'" if mcp else "web search"
+    """One extraction attempt — against a single MCP server, a best-effort scrape
+    of a registry website, or a plain web search when ``mcp`` is None."""
+    via = _via_label(mcp)
     messages = [{"role": "user", "content": _user_prompt(query, via)}]
 
     for _ in range(MAX_PAUSE_TURN_CONTINUATIONS):
-        if mcp:
-            response = await client.beta.messages.create(
-                model=settings.anthropic_model,
-                max_tokens=16000,
-                system=_SYSTEM,
-                messages=messages,
-                mcp_servers=[{"type": "url", "name": mcp.name, "url": mcp.url}],
-                output_config={"format": _OUTPUT_FORMAT},
-                betas=["mcp-client-2025-11-20"],
-            )
-        else:
-            response = await client.messages.create(
-                model=settings.anthropic_model,
-                max_tokens=16000,
-                system=_SYSTEM,
-                messages=messages,
-                tools=[{"type": "web_search_20260209", "name": "web_search"}],
-                output_config={"format": _OUTPUT_FORMAT},
-            )
+        response = await _create_response(client, messages, mcp)
 
         if response.stop_reason == "pause_turn":
             # Server-side tool loop paused — append the assistant turn and resume.

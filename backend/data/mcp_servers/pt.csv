@@ -1,0 +1,6 @@
+# Portugal (PT) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by NIPC and registered with the Registo Comercial
+# (IRN). Best-effort scrape, give up and continue.
+rank;name;url;notes;kind
+1;publicacoes-mj;https://publicacoes.mj.pt/;Ministry of Justice commercial registry publications;scrape
+2;racius;https://www.racius.com/;Portuguese company (NIPC) directory;scrape

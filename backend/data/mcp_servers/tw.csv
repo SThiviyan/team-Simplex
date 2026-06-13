@@ -1,0 +1,7 @@
+# Taiwan (TW) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by the 8-digit Unified Business Number (統一編號),
+# held by the Ministry of Economic Affairs (GCIS). Best-effort scrape, give up
+# and continue.
+rank;name;url;notes;kind
+1;findbiz;https://findbiz.nat.gov.tw/;GCIS company & business registration public search;scrape
+2;gcis-opendata;https://data.gcis.nat.gov.tw/;GCIS open data company datasets;scrape

@@ -9,12 +9,15 @@ from app.search.base import SearchProvider
 from app.search.providers.annuaire import AnnuaireSearchProvider
 from app.search.providers.ares import AresSearchProvider
 from app.search.providers.ariregister import AriregisterSearchProvider
+from app.search.providers.brasil import BrasilSearchProvider
 from app.search.providers.brreg import BrregSearchProvider
 from app.search.providers.companies_house import CompaniesHouseSearchProvider
 from app.search.providers.cro import CroSearchProvider
 from app.search.providers.cvr import CvrSearchProvider
+from app.search.providers.gbizinfo import GbizInfoSearchProvider
 from app.search.providers.gleif import GleifSearchProvider
 from app.search.providers.handelsregister import HandelsregisterSearchProvider
+from app.search.providers.krs_pl import KrsPlSearchProvider
 from app.search.providers.kvk_nl import KvkNlSearchProvider
 from app.search.providers.orgbook_ca import OrgbookCaSearchProvider
 from app.search.providers.rasham_il import RashamIlSearchProvider
@@ -45,4 +48,7 @@ def all_providers() -> list[SearchProvider]:
         RashamIlSearchProvider(),  # IL
         RskIsSearchProvider(),  # IS (scraped)
         KvkNlSearchProvider(),  # NL
+        BrasilSearchProvider(),  # BR (Receita Federal CNPJ via BrasilAPI)
+        GbizInfoSearchProvider(),  # JP (gBizINFO / METI, token-gated)
+        KrsPlSearchProvider(),  # PL (KRS court register, by KRS number)
     ]

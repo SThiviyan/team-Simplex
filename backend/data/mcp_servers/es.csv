@@ -1,0 +1,7 @@
+# Spain (ES) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by NIF/CIF and registered with the Registro Mercantil.
+# Best-effort scrape, give up and continue to the next source if one yields nothing.
+rank;name;url;notes;kind
+1;registro-mercantil;https://www.rmc.es/;Registro Mercantil Central (company name reservation / search);scrape
+2;borme;https://www.boe.es/diario_borme/;Boletín Oficial del Registro Mercantil (BORME);scrape
+3;einforma;https://www.einforma.com/;Spanish company (CIF) directory;scrape

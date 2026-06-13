@@ -66,6 +66,7 @@ async def csv_search_endpoint(
     `winners` are returned to the frontend so it can show the final result.
     """
     from app.matching.pipeline import match_payload
+    from app.matching.recursion import apply_recursive_retry
 
     payload = await csv_search(app.state.providers, q, limit=limit)
     # Run the matching layer directly on the in-memory gathered records (the
@@ -74,8 +75,18 @@ async def csv_search_endpoint(
     # `settings.anthropic_api_key` honours both the real env and `.env`.
     have_key = bool(settings.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY"))
     mock = settings.pipeline_mock or not have_key
-    payload["winners"] = await match_payload(
+    winners = await match_payload(
         payload,
+        model=settings.anthropic_model,
+        mock=mock,
+    )
+    # A low-confidence candidate is never returned: for any query the matcher
+    # left inconclusive, try ONE more time with a better same-entity query
+    # (re-querying the registers) and keep it only if it now matches confidently.
+    payload["winners"] = await apply_recursive_retry(
+        app.state.providers,
+        winners,
+        limit=limit,
         model=settings.anthropic_model,
         mock=mock,
     )

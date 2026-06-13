@@ -59,6 +59,13 @@ class Settings(BaseSettings):
         description="KVK API key (sent as 'apikey'); default is the public test key",
     )
 
+    # --- gBizINFO (Japan, METI company information) ------------------------
+    # Optional, keyed source for JP. Free token from https://info.gbiz.go.jp/api/;
+    # if unset the provider disables itself and the keyless sources still work.
+    gbizinfo_api_token: str | None = Field(
+        default=None, description="gBizINFO API token (sent as x-hojinInfo-api-token)"
+    )
+
     # --- Pipeline (registry-lookup agent chain) ---
     # The Anthropic SDK reads ANTHROPIC_API_KEY from os.environ. We also surface
     # it here so a key supplied via `.env` (pydantic) is honoured — see the

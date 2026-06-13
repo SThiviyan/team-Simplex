@@ -1,0 +1,7 @@
+# Japan (JP) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by the 13-digit Corporate Number (Houjin Bangou). The
+# gBizINFO API is additionally wired as a structured provider
+# (app/search/providers/gbizinfo.py). Best-effort scrape, give up and continue.
+rank;name;url;notes;kind
+1;gbizinfo;https://info.gbiz.go.jp/;gBizINFO (METI) corporate information search;scrape
+2;houjin-bangou;https://www.houjin-bangou.nta.go.jp/;National Tax Agency Corporate Number publication site;scrape

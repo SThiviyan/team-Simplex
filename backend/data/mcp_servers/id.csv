@@ -1,0 +1,6 @@
+# Indonesia (ID) business registries — best-effort scrape entries (kind=scrape).
+# Companies (Perseroan Terbatas) are registered with the Ministry of Law
+# (AHU / Ditjen AHU). Best-effort scrape, give up and continue.
+rank;name;url;notes;kind
+1;ahu;https://ahu.go.id/pencarian/profil-perseroan;Ditjen AHU legal-entity (perseroan) profile search;scrape
+2;oss;https://oss.go.id/;Online Single Submission business licensing portal;scrape

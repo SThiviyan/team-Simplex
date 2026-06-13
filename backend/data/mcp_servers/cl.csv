@@ -1,0 +1,5 @@
+# Chile (CL) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by RUT. Best-effort scrape, give up and continue.
+rank;name;url;notes;kind
+1;registro-empresas;https://www.registrodeempresasysociedades.cl/;Chile Registro de Empresas y Sociedades (RES);scrape
+2;sii;https://zeus.sii.cl/cvc_cgi/stc/getstc;Chile SII taxpayer situation lookup;scrape

@@ -1,0 +1,6 @@
+# Hong Kong (HK) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by the CR number, held by the Companies Registry.
+# Best-effort scrape, give up and continue.
+rank;name;url;notes;kind
+1;icris;https://www.icris.cr.gov.hk/;Companies Registry ICRIS Cyber Search Centre;scrape
+2;cr-gov-hk;https://www.cr.gov.hk/;Hong Kong Companies Registry;scrape

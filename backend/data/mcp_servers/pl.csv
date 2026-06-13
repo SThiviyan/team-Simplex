@@ -1,0 +1,7 @@
+# Poland (PL) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by the KRS number (court register). The KRS open API
+# is additionally wired as a structured provider (app/search/providers/krs_pl.py)
+# for number lookups; these sites add best-effort NAME search. Give up and continue.
+rank;name;url;notes;kind
+1;krs-wyszukiwarka;https://wyszukiwarka-krs.ms.gov.pl/;Ministry of Justice KRS search engine;scrape
+2;rejestr-io;https://rejestr.io/;Polish company (KRS) name search;scrape

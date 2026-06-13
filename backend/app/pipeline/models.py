@@ -1,3 +1,6 @@
+from typing import Literal
+from urllib.parse import urlparse
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -10,17 +13,32 @@ class QueryRow(BaseModel):
 
 
 class McpServerEntry(BaseModel):
-    """One entry in a per-country ranked MCP server list (mocked via CSV)."""
+    """One entry in a per-country ranked source list (mocked via CSV).
+
+    ``kind`` selects how the agent reaches the source:
+    - ``mcp``    — connect Claude to a remote MCP server at ``url``.
+    - ``scrape`` — best-effort scrape of a registry WEBSITE: a domain-scoped web
+      search of ``url`` (used for US state Secretary-of-State sites, which have
+      no MCP endpoint). Failures are non-fatal — the agent moves to the next.
+    """
+
+    model_config = ConfigDict(extra="ignore")
 
     rank: int
     name: str
     url: str
     notes: str = ""
+    kind: Literal["mcp", "scrape"] = "mcp"
 
     @property
     def is_placeholder(self) -> bool:
         # Placeholder entries (no real MCP endpoint yet) are skipped by the agent.
         return "example.invalid" in self.url
+
+    @property
+    def domain(self) -> str:
+        """Host of ``url`` (e.g. 'sunbiz.org'), for domain-scoped scraping."""
+        return urlparse(self.url).netloc
 
 
 class ExtractionPayload(BaseModel):

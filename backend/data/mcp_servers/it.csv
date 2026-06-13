@@ -1,0 +1,7 @@
+# Italy (IT) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by Codice Fiscale / Partita IVA and registered with
+# the Registro Imprese (chambers of commerce). Best-effort scrape, give up and
+# continue.
+rank;name;url;notes;kind
+1;registro-imprese;https://www.registroimprese.it/;Registro Imprese company search;scrape
+2;ufficiocamerale;https://www.ufficiocamerale.it/;Italian company (P.IVA) directory;scrape

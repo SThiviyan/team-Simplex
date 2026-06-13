@@ -1,0 +1,6 @@
+# India (IN) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by CIN and registered with the MCA. Best-effort
+# scrape, give up and continue to the next source if one yields nothing.
+rank;name;url;notes;kind
+1;mca-master-data;https://www.mca.gov.in/mcafoportal/viewCompanyMasterData.do;Ministry of Corporate Affairs (MCA21) company master data;scrape
+2;zaubacorp;https://www.zaubacorp.com/;India company (CIN) name directory;scrape

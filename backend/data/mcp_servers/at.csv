@@ -1,0 +1,6 @@
+# Austria (AT) business registries — best-effort scrape entries (kind=scrape).
+# Companies are identified by the Firmenbuchnummer (FN) in the Firmenbuch.
+# Best-effort scrape, give up and continue to the next source if one yields nothing.
+rank;name;url;notes;kind
+1;firmenbuch;https://justizonline.gv.at/jop/web/firmenbuchabfrage;Austrian Firmenbuch (justizonline) company search;scrape
+2;firmenabc;https://www.firmenabc.at/;Austrian company name directory;scrape
