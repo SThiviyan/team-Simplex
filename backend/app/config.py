@@ -79,6 +79,12 @@ class Settings(BaseSettings):
         "On = more datapoints (scored); off = faster batches. The MCP branch's owner-lookup "
         "opt-in equivalent",
     )
+    web_search_timeout: float = Field(
+        default=30.0,
+        description="Hard wall-clock cap (s) on the Layer-1 web-search FALLBACK (only runs when "
+        "no register source matched). Stops an unresolvable query from looping for minutes; on "
+        "timeout the row abstains — the right outcome for an unfindable entity.",
+    )
     enrichment_web_fill_timeout: float = Field(
         default=35.0,
         description="Hard wall-clock cap (s) on the Layer-2 web-search fill. 20s was too tight "

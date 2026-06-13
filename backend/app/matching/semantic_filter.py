@@ -128,6 +128,15 @@ write any prose outside the tool call.
    If the only candidates are mismatched siblings, prefer no_match/ambiguous
    over confidently returning the wrong entity.
 
+7b. EXACT-CORE SINGLE MATCH BEATS AMBIGUOUS. Apply rule 7 the other way too:
+   if EXACTLY ONE candidate's core name (after stripping legal-form suffixes)
+   EQUALS the query, that candidate IS the match — return it, even when other
+   candidates merely share the word but add meaning-bearing words ("Pfotenliebe"
+   -> pick "Pfotenliebe GmbH" over "Pfotenliebe Tierbedarf UG"; "EUMAX" -> pick
+   "EUMAX GmbH" over "EUMAX Trading GmbH"). Those siblings are NOT competing
+   matches (rule 7), so this is NOT an ambiguous tie. Only return ambiguous when
+   two or more candidates ALL have the same exact core name as the query.
+
 CORPORATE GROUPS. When a bare brand query matches several entities of one group
 (holding plc vs operating DAC/A-S/GmbH subsidiaries), prefer the group's PRIMARY
 registered entity — the top holding / listed company — unless the query names a

@@ -26,11 +26,14 @@ from app.pipeline.models import ExtractionPayload, ExtractionResult, McpServerEn
 
 logger = logging.getLogger(__name__)
 
-MAX_PAUSE_TURN_CONTINUATIONS = 5
-# Hardest observed case (PwC) needed 3 rounds; 5 leaves headroom while stopping
-# a confused agent from burning 8 Opus calls on one row. On cap-hit the entry
-# returns None and the walk/fallback continues exactly as before.
-MAX_TOOL_ROUNDS = 5
+# The web-search fallback can pause_turn (server-side search) and resume. 2
+# covers a search + answer; 5 let an unresolvable query (e.g. an offshore shell
+# not on the open web) loop for minutes. Bounded further by web_search_timeout.
+MAX_PAUSE_TURN_CONTINUATIONS = 2
+# Hardest observed resolving case (PwC) needed 3 rounds. 3 is enough; 5 mostly let
+# UNRESOLVABLE rows burn extra Opus rounds + slow re-gathers for nothing (the
+# per-row latency outliers). On cap-hit the walk/fallback continues as before.
+MAX_TOOL_ROUNDS = 3
 
 # Per-run cap on the Layer-1 tool loop. Batch (CSV) runs lower it so each row
 # fires fewer Opus calls (faster + less Anthropic 429 pressure across dozens of
@@ -696,12 +699,18 @@ async def run_layer1(query: QueryRow, mcps: list[McpServerEntry], run_id: str) -
         if payload.clamped_confidence() >= settings.confidence_threshold:
             return outcome  # early exit — skip lower-ranked MCPs
 
-    # Web-search fallback: nothing usable came out of the MCP walk.
+    # Web-search fallback: nothing usable came out of the MCP walk. Hard
+    # wall-clock cap — an unresolvable query (offshore shell not on the open web)
+    # otherwise loops here for minutes (pause_turn + 529 retries). On timeout we
+    # just abstain, which is the correct outcome for an unfindable entity.
     if not outcome.candidates and not outcome.records:
         try:
-            payload = await _web_search_attempt(client, query, run_id)
-        except Exception as exc:
-            logger.exception("web-search fallback failed for %s", query.query_id)
+            payload = await asyncio.wait_for(
+                _web_search_attempt(client, query, run_id),
+                timeout=settings.web_search_timeout,
+            )
+        except Exception as exc:  # incl. TimeoutError from wait_for
+            logger.warning("web-search fallback failed/timed out for %s: %s", query.query_id, exc)
             outcome.errors.append(f"web_search: {type(exc).__name__}: {str(exc)[:120]}")
             await event_log.log_event(run_id, "error", query.query_id, kind=type(exc).__name__)
             payload = None
