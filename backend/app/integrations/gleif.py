@@ -8,7 +8,6 @@ Shared by both the GLEIF MCP server and the GLEIF search provider so the
 request/normalisation logic lives in one place.
 """
 
-import asyncio
 
 from app.integrations.http import rate_limited_get, shared_client
 
@@ -83,39 +82,41 @@ def _normalise(rec: dict) -> dict:
 async def search_entities(name: str, limit: int = 10) -> list[dict]:
     """Search the LEI register by name. Returns normalised entity dicts.
 
-    Two queries, merged: legalName (best precision, keeps priority order) plus
-    fulltext, which also matches trading/other names — that's what finds the
-    flagship entity behind an acronym like "PwC", whose legalName is
-    "PricewaterhouseCoopers ..." and only carries the acronym as another name.
+    legalName first (best precision); fall back to fulltext only if it found
+    nothing. fulltext also matches trading/other names — that's what finds the
+    flagship behind an acronym like "PwC" — but it doubles the rate budget, so
+    it runs only when needed.
     """
     size = max(1, min(limit, 100))
     page = {"page[size]": size, "page[number]": 1}
     client = shared_client("gleif", base_url=API_BASE, headers=_HEADERS, timeout=20.0)
-    legal_resp, full_resp = await asyncio.gather(
-        rate_limited_get(
+
+    async def query(filter_key: str):
+        return await rate_limited_get(
             "gleif", client, "/lei-records",
-            min_interval=_MIN_INTERVAL,
-            params={"filter[entity.legalName]": name, **page},
-        ),
-        rate_limited_get(
-            "gleif", client, "/lei-records",
-            min_interval=_MIN_INTERVAL,
-            params={"filter[fulltext]": name, **page},
-        ),
-        return_exceptions=True,
-    )
-    entities: list[dict] = []
-    seen: set[str] = set()
-    for resp in (legal_resp, full_resp):
+            min_interval=_MIN_INTERVAL, params={filter_key: name, **page},
+        )
+
+    def collect(resp, into: list, seen: set) -> None:
         if isinstance(resp, BaseException):
-            continue  # one search path failing must not kill the other
+            return  # one search path failing must not kill the other
         resp.raise_for_status()
         for rec in resp.json().get("data", []):
             e = _normalise(rec)
             key = e.get("lei") or e.get("name") or ""
             if key and key not in seen:
                 seen.add(key)
-                entities.append(e)
+                into.append(e)
+
+    # The precise legalName query first. Only fall back to the broader (and
+    # rate-budget-doubling) fulltext query when it found nothing — this halves
+    # GLEIF's request volume on a batch, so the per-IP throttle queue drains
+    # ~2x faster and far fewer calls are cancelled by the gather timeout.
+    entities: list[dict] = []
+    seen: set[str] = set()
+    collect(await query("filter[entity.legalName]"), entities, seen)
+    if not entities:
+        collect(await query("filter[fulltext]"), entities, seen)
     return entities[:size]
 
 

@@ -47,6 +47,11 @@ class GleifSearchProvider(SearchProvider):
     name = "gleif"
     # Keyless and LLM-free, so it is always available.
     enabled = True
+    # GLEIF is rate-limited (~1/s, global per-IP throttle). Under a big batch the
+    # throttle queue can exceed the 12s fast-API default, so give it room — it is
+    # fast per call, just paced. Without this the gather timeout cancels most
+    # GLEIF calls in a batch and the GLEIF-only jurisdictions come back empty.
+    search_timeout = 60.0
 
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
         try:

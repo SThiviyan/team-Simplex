@@ -23,6 +23,7 @@ class WikidataSearchProvider(SearchProvider):
     name = "wikidata"
     # Public SPARQL endpoint, no credentials needed.
     enabled = True
+    search_timeout = 30.0  # SPARQL can be slow; don't let the 12s default cancel it
 
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
         try:
