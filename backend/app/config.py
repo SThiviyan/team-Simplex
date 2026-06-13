@@ -138,6 +138,12 @@ class Settings(BaseSettings):
         "independent, so wall clock ≈ slowest row once this reaches the batch size; lower it if "
         "API rate limits / 529 storms bite",
     )
+    batch_concurrency: int = Field(
+        default=50,
+        description="Concurrency cap for multi-row (CSV) batches — rows are independent, so this "
+        "lets dozens run at once. The real ceiling is the Anthropic rate limit (too high -> 429 "
+        "storms that slow it DOWN), so this is a sane upper bound, not 'unlimited'.",
+    )
 
 
 settings = Settings()

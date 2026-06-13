@@ -22,6 +22,7 @@ confidence caps) and echoes the jurisdiction in the caller's convention
 """
 
 import asyncio
+import contextvars
 import logging
 import re
 from functools import cache
@@ -820,6 +821,24 @@ def _echo_jurisdiction(result: ExtractionResult, query: QueryRow) -> str | None:
     return result.jurisdiction_confirmed
 
 
+# Per-run override for the slow web-search fill. Batch runs (CSV upload) set this
+# False so dozens of rows don't each pay the ~35s web_fill tail; a single
+# interactive query leaves it None -> settings.enrichment_web_fill. A contextvar
+# (not a setting mutation) keeps concurrent runs independent.
+_web_fill_override: contextvars.ContextVar[bool | None] = contextvars.ContextVar(
+    "enrichment_web_fill_override", default=None
+)
+
+
+def set_web_fill_override(value: bool | None) -> None:
+    _web_fill_override.set(value)
+
+
+def _web_fill_enabled() -> bool:
+    override = _web_fill_override.get()
+    return settings.enrichment_web_fill if override is None else override
+
+
 async def enrich_result(
     query: QueryRow, result: ExtractionResult, records: list[dict], run_id: str
 ) -> ExtractionResult:
@@ -868,7 +887,7 @@ async def enrich_result(
         # 0.7 gate silently dropped Tier-A for every 'probable' row (e.g. BMW at
         # 0.68), losing data that the web/Impressum readily has.
         if (
-            settings.enrichment_web_fill
+            _web_fill_enabled()  # batch runs turn this off so rows don't pay the ~35s tail
             and _missing_tier_a(result)  # skip the costly call to chase only officers
             and (result.registry_id or result.confidence >= 0.55)
         ):

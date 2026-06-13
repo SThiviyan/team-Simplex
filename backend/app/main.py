@@ -252,7 +252,11 @@ async def pipeline_run_csv(
             status_code=400,
             detail="No rows parsed — expected a CSV with columns query_id, name, jurisdiction",
         )
-    summary = await run_pipeline(queries=queries, session_id=x_session_id)
+    # Batch upload: turn off the slow per-row web-search fill so dozens of rows
+    # run fast in parallel (the ~35s web_fill tail per row is the dominant batch
+    # cost). Core Tier A still comes from the registers/GLEIF/Impressum. Flip the
+    # query param to re-enable depth at the cost of speed.
+    summary = await run_pipeline(queries=queries, session_id=x_session_id, web_fill=False)
     output = Path(summary.output_csv)
     return FileResponse(output, media_type="text/csv", filename=output.name)
 

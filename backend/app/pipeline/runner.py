@@ -253,6 +253,7 @@ async def run_pipeline(
     limit: int | None = None,
     output_dir: Path = csv_io.OUTPUT_DIR,
     session_id: str | None = None,
+    web_fill: bool | None = None,
 ) -> PipelineRunSummary:
     if queries is None:
         queries = csv_io.read_queries()
@@ -263,10 +264,20 @@ async def run_pipeline(
     # gather tasks below) to the calling browser tab's session, so concurrent
     # runs from different tabs stay isolated in the event log.
     event_log.set_session(session_id)
+    # Per-run web-fill toggle: batch (CSV) runs pass False so dozens of rows
+    # don't each pay the ~35s web-search tail (the dominant batch cost); a single
+    # interactive query leaves it None -> settings default. Multi-row batches also
+    # get a higher concurrency cap so independent rows truly run in parallel.
+    from app.pipeline import enrichment
+
+    enrichment.set_web_fill_override(web_fill)
     run_id = event_log.new_run_id()
     await event_log.log_event(run_id, "run_started", rows=len(queries))
 
-    semaphore = asyncio.Semaphore(settings.pipeline_concurrency)
+    concurrency = settings.pipeline_concurrency
+    if len(queries) > 1:
+        concurrency = max(concurrency, min(len(queries), settings.batch_concurrency))
+    semaphore = asyncio.Semaphore(concurrency)
     # gather() preserves input order regardless of completion order.
     results = list(
         await asyncio.gather(*(_process_guarded(q, semaphore, run_id) for q in queries))
