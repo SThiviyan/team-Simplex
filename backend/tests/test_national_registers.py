@@ -194,3 +194,32 @@ async def test_handelsregister_scrape_respects_opt_out(monkeypatch):
     monkeypatch.setattr(settings, "handelsregister_scrape_fallback", False)
     # Off -> returns [] without ever touching the (slow) scraper.
     assert await HandelsregisterSearchProvider().search("Siemens", limit=3) == []
+
+
+async def test_northdata_costs_nothing_unless_apify_enabled(monkeypatch):
+    """Cost guard: the PAID NorthData/Apify actor must NEVER be invoked unless
+    BOTH a token is set AND apify_enabled is true (prod-only). The €5 budget
+    depends on this — dev (apify_enabled=false) must self-skip with no actor call.
+    """
+    from app.config import settings
+    from app.integrations import apify_northdata
+    from app.search.providers.northdata import NorthDataSearchProvider
+
+    called = False
+
+    async def _boom(*a, **k):
+        nonlocal called
+        called = True
+        raise AssertionError("paid Apify actor was invoked while disabled")
+
+    monkeypatch.setattr(apify_northdata, "search_companies", _boom)
+
+    # Even WITH a token, apify_enabled=false -> skip, no actor call.
+    monkeypatch.setattr(settings, "apify_api_key", "tok_xxx")
+    monkeypatch.setattr(settings, "apify_enabled", False)
+    assert await NorthDataSearchProvider().search("BMW", limit=3) == []
+    # And with no token at all.
+    monkeypatch.setattr(settings, "apify_api_key", None)
+    monkeypatch.setattr(settings, "apify_enabled", True)
+    assert await NorthDataSearchProvider().search("BMW", limit=3) == []
+    assert called is False  # the actor was never reached in either case
