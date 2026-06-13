@@ -96,6 +96,16 @@ Apply reasoning that pure string matching cannot:
      - 0.40-0.69: plausible but genuinely ambiguous.
      - 0.00-0.39: weak; likely not a real match.
 
+   FAME / TIE-BREAKING. Each candidate has a `fame` count (`provider_count`
+   distinct sources, `fame` total mentions) — how many independent registers
+   returned it. When two or more candidates are otherwise comparable name
+   matches, PREFER the one with higher fame: a company corroborated by many
+   sources is far more likely the mainstream entity the user meant — especially
+   when the query is a short/common name (e.g. "siemens") and the high-fame
+   candidate is the full legal name ("Siemens Aktiengesellschaft"). Break any
+   remaining tie by `completeness`. Never let fame override a clearly better name
+   or jurisdiction match.
+
 5. RECURSIVE TRIGGERING. If NONE of the candidates is the right entity, STRONGLY
    prefer "recursive_search" over "no_match": whenever you can think of a more
    promising query — an expanded acronym, the native-language registered name, a
@@ -193,9 +203,13 @@ def _build_user_content(
         name = cand.get(NAME_FIELD)
         juris = cand.get(JURISDICTION_FIELD)
         conf = cand.get(CONFIDENCE_FIELD)
+        fame = cand.get("_fame", 1)
+        providers = cand.get("_provider_count", 1)
+        completeness = cand.get("_completeness", 0.0)
         lines.append(
             f"  [{i}] name={name!r} jurisdiction={juris!r} "
-            f"fuzzy_confidence={conf!r}"
+            f"confidence={conf!r} fame={fame} provider_count={providers} "
+            f"completeness={completeness}"
         )
         lines.append(f"      full_record={json.dumps(cand, ensure_ascii=False)}")
     lines.append("")

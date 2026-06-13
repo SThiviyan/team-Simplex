@@ -15,10 +15,12 @@ import logging
 from typing import Any
 
 from app.matching.company_matcher import (
+    CONFIDENCE_FIELD,
     Target,
     candidate_to_dict,
     find_candidates,
 )
+from app.matching.corroboration import corroborate, corroboration_boost
 from app.matching.semantic_filter import (
     DECISION_MATCH,
     DEFAULT_MODEL,
@@ -67,9 +69,37 @@ def run_matching(
     """
     target = Target(name=name, jurisdiction=jurisdiction)
 
-    # ---- Layer 1: RapidFuzz gross filter (local, free) -------------------
+    # ---- Layer 0: graph consolidation — merge duplicates, count "fame" ---
+    # FuzzyAI-style: cluster records that refer to the same entity (graph
+    # connected components) into one most-complete row carrying how many distinct
+    # sources found it.
+    records = corroborate(records)
+
+    # ---- Layer 1: RapidFuzz + Fellegi-Sunter gross filter ----------------
     fuzz_hits = find_candidates(records, target, top_n=top_n, score_cutoff=score_cutoff)
     candidates = [candidate_to_dict(c) for c in fuzz_hits]
+
+    # Fame boost: lift confidence for entities corroborated by many sources, so a
+    # mainstream result wins even when the input differs from the registered name
+    # (e.g. "siemens" -> "Siemens Aktiengesellschaft"). Then re-rank.
+    for cand in candidates:
+        provider_count = cand.get("_provider_count", 1)
+        base = cand.get(CONFIDENCE_FIELD, 0.0)
+        boosted = corroboration_boost(base, provider_count)
+        cand[CONFIDENCE_FIELD] = boosted
+        cand["_match"]["base_confidence"] = base
+        cand["_match"]["confidence_boost"] = round(boosted - base, 4)
+        cand["_match"]["fame"] = cand.get("_fame", 1)
+        cand["_match"]["provider_count"] = provider_count
+        cand["_match"]["completeness"] = cand.get("_completeness", 0.0)
+    candidates.sort(
+        key=lambda c: (
+            c.get(CONFIDENCE_FIELD, 0.0),
+            c["_match"].get("provider_count", 0),
+            c["_match"].get("completeness", 0.0),
+        ),
+        reverse=True,
+    )
 
     # ---- Layer 2: LLM semantic filter (calls Claude, unless mock) --------
     try:
