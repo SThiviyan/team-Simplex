@@ -92,12 +92,15 @@ def select_providers(
 
 
 async def _bounded_search(p: SearchProvider, name: str, limit: int) -> list[SearchResult]:
-    """One provider's search under a hard timeout, so a slow/blocked source
-    (e.g. a stalled scrape) can never stall the whole row. Timeouts and errors
-    are non-fatal — they surface as exceptions that _gather drops."""
+    """One provider's search under a hard timeout, so a slow/blocked source can
+    never stall the whole row. The cap is the provider's own `search_timeout`
+    when set (slow scrapers need more than the fast-API default), else
+    settings.provider_timeout. Timeouts/errors are non-fatal — they surface as
+    exceptions that _gather drops."""
     from app.config import settings
 
-    return await asyncio.wait_for(cached_search(p, name, limit), timeout=settings.provider_timeout)
+    timeout = p.search_timeout or settings.provider_timeout
+    return await asyncio.wait_for(cached_search(p, name, limit), timeout=timeout)
 
 
 async def _gather(

@@ -74,6 +74,10 @@ class SearchProvider(ABC):
     # relevant). The resolver uses this to skip e.g. a German register when
     # the requested jurisdiction is Hungary.
     jurisdictions: set[str] | None = None
+    # Hard gather-layer timeout (seconds). None = use settings.provider_timeout.
+    # Override (higher) for inherently slow sources like the Handelsregister
+    # browser scrape, which the default fast-API timeout would strangle.
+    search_timeout: float | None = None
 
     @abstractmethod
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
