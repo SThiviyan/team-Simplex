@@ -25,6 +25,31 @@ class Settings(BaseSettings):
     ajpes_user: str | None = Field(default=None, description="AJPES restPrsInfo username")
     ajpes_password: str | None = Field(default=None, description="AJPES restPrsInfo password")
     ajpes_schema: str | None = Field(default=None, description="AJPES authorised data-set code")
+    # KVK ships a public TEST key (synthetic data); a production key returns real
+    # Dutch companies. Default to the test key so the NL provider works out of the
+    # box; set a prod key in secrets for live data, or "" to disable.
+    kvk_api_key: str | None = Field(
+        default="l7xx1f2691f2520d487b902f4e0b57a0b197",
+        description="KVK Zoeken API key (default = KVK public test key; prod key for real data)",
+    )
+
+    # --- Gather / scrape tuning (speed) -------------------------------------
+    provider_timeout: float = Field(
+        default=12.0,
+        description="Hard per-provider timeout (s) in the gather layer; a slow source "
+        "can't stall the row",
+    )
+    handelsregister_scrape_fallback: bool = Field(
+        default=True,
+        description="Run the slow (~50s) handelsregister.de browser scrape. Turn off for "
+        "fast batches — GLEIF + Impressum still cover DE",
+    )
+    enrichment_web_fill: bool = Field(
+        default=True,
+        description="Layer-2 web-search fill for missing Tier A/B fields (officers, etc.). "
+        "On = more datapoints (scored); off = faster batches. The MCP branch's owner-lookup "
+        "opt-in equivalent",
+    )
 
     # --- Pipeline (registry-lookup agent chain) ---
     # The Anthropic SDK reads ANTHROPIC_API_KEY from the environment itself.

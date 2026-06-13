@@ -91,11 +91,20 @@ def select_providers(
     return [p for p in providers if p.jurisdictions is None or cc in p.jurisdictions]
 
 
+async def _bounded_search(p: SearchProvider, name: str, limit: int) -> list[SearchResult]:
+    """One provider's search under a hard timeout, so a slow/blocked source
+    (e.g. a stalled scrape) can never stall the whole row. Timeouts and errors
+    are non-fatal — they surface as exceptions that _gather drops."""
+    from app.config import settings
+
+    return await asyncio.wait_for(cached_search(p, name, limit), timeout=settings.provider_timeout)
+
+
 async def _gather(
     selected: list[SearchProvider], name: str, jurisdiction: str | None, limit: int
 ) -> list[SearchResult]:
     batches = await asyncio.gather(
-        *(cached_search(p, name, limit) for p in selected), return_exceptions=True
+        *(_bounded_search(p, name, limit) for p in selected), return_exceptions=True
     )
     results: list[SearchResult] = []
     for b in batches:

@@ -563,8 +563,9 @@ async def enrich_result(
         except Exception:
             logger.exception("impressum enrichment failed for %s", query.query_id)
         # Web fill only for confidently identified entities: enriching the
-        # wrong company is worse than returning blanks.
-        if result.confidence >= 0.7 and _missing_fields(result):
+        # wrong company is worse than returning blanks. Opt-out for fast batches
+        # (it's the main per-row LLM latency cost) — like MCP's owner-lookup flag.
+        if settings.enrichment_web_fill and result.confidence >= 0.7 and _missing_fields(result):
             try:
                 result = await _web_fill(result, query, run_id)
             except Exception:

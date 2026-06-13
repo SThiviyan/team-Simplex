@@ -17,6 +17,13 @@ class HandelsregisterSearchProvider(SearchProvider):
     enabled = True
 
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
+        # The handelsregister.de scrape is the slowest source in the stack
+        # (session-based JSF, serialized, ~tens of seconds). It's opt-in: with it
+        # off, GLEIF + the Impressum enrichment still cover DE registry numbers.
+        from app.config import settings
+
+        if not settings.handelsregister_scrape_fallback:
+            return []
         try:
             rows = await asyncio.to_thread(handelsregister.search_companies, query, limit)
         except Exception:

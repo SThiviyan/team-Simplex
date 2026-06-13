@@ -154,3 +154,41 @@ async def test_sec_demotes_cik_to_metadata(monkeypatch):
     results = await SecSearchProvider().search("Apple", limit=5)
     assert results[0].registry_id is None
     assert results[0].metadata["cik"] == "0000320193"
+
+
+def test_pulled_mcp_connectors_metadata_and_wiring():
+    from app.search.providers.ariregister import AriregisterSearchProvider
+    from app.search.providers.kvk_nl import KvkNlSearchProvider
+    from app.search.providers.orgbook_ca import OrgbookCaSearchProvider
+    from app.search.providers.rasham_il import RashamIlSearchProvider
+    from app.search.providers.rpo_sk import RpoSkSearchProvider
+    from app.search.providers.rsk_is import RskIsSearchProvider
+    from app.search.sources import all_providers
+
+    assert AriregisterSearchProvider().jurisdictions == {"EE"}
+    assert RpoSkSearchProvider().jurisdictions == {"SK"}
+    assert OrgbookCaSearchProvider().jurisdictions == {"CA"}
+    assert RashamIlSearchProvider().jurisdictions == {"IL"}
+    assert RskIsSearchProvider().jurisdictions == {"IS"}
+    assert KvkNlSearchProvider().jurisdictions == {"NL"}
+
+    names = {p.name for p in all_providers()}
+    assert {"ariregister", "rpo", "orgbook", "rasham", "rsk", "kvk"} <= names
+    assert len(all_providers()) == 19
+
+
+async def test_kvk_self_disables_without_key(monkeypatch):
+    from app.config import settings
+    from app.search.providers.kvk_nl import KvkNlSearchProvider
+
+    monkeypatch.setattr(settings, "kvk_api_key", None)
+    assert await KvkNlSearchProvider().search("Shell", limit=3) == []
+
+
+async def test_handelsregister_scrape_respects_opt_out(monkeypatch):
+    from app.config import settings
+    from app.search.providers.handelsregister import HandelsregisterSearchProvider
+
+    monkeypatch.setattr(settings, "handelsregister_scrape_fallback", False)
+    # Off -> returns [] without ever touching the (slow) scraper.
+    assert await HandelsregisterSearchProvider().search("Siemens", limit=3) == []
