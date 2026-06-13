@@ -293,16 +293,16 @@ function StageNode({ stage, maxCount }: { stage: Stage; maxCount: number }) {
           )}
         </div>
       </div>
+      {/* Label: black while processing; once finalised it takes the ring
+          (confidence) color so the word agrees with the circle. */}
       <span
         className={`w-full truncate text-center text-[11px] leading-tight font-medium ${
           stage.emphasis
-            ? 'font-semibold ' + (emphasisFinal ? '' : 'text-ink') // black while processing
+            ? `font-semibold ${emphasisFinal ? '' : 'text-ink'}`
             : dim
               ? 'text-muted'
               : 'text-ink'
         }`}
-        // Once finalised, the label color matches the circle's ring (the
-        // confidence color), so green at 95% reads green, not red.
         style={emphasisFinal ? { color: ring } : undefined}
       >
         {stage.label}
