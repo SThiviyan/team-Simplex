@@ -528,6 +528,20 @@ async def test_event_log_records_run_sequence(mock_mode, tmp_path):
     assert [e["seq"] for e in later] == seqs[2:]
 
 
+async def test_runs_are_isolated_by_session(mock_mode, tmp_path):
+    """Two client sessions (browser tabs) must not see each other's runs: this is
+    what stops one tab's live view from showing another tab's pipeline."""
+    a = await run_pipeline(limit=1, output_dir=tmp_path, session_id="sess-A")
+    b = await run_pipeline(limit=1, output_dir=tmp_path, session_id="sess-B")
+
+    assert {r["run_id"] for r in event_log.list_runs(session_id="sess-A")} == {a.run_id}
+    assert {r["run_id"] for r in event_log.list_runs(session_id="sess-B")} == {b.run_id}
+    # A session that started nothing sees nothing.
+    assert event_log.list_runs(session_id="sess-C") == []
+    # No filter (CLI / admin view) still sees every run.
+    assert {a.run_id, b.run_id} <= {r["run_id"] for r in event_log.list_runs()}
+
+
 async def test_pipeline_preserves_input_order_and_isolates_crashes(mock_mode, tmp_path, monkeypatch):
     from app.pipeline import runner
 
@@ -595,6 +609,34 @@ def test_runs_and_events_endpoints(mock_mode):
             f"/api/pipeline/runs/{run_id}/events", params={"after": feed["events"][0]["seq"]}
         ).json()
         assert len(rest["events"]) == len(feed["events"]) - 1
+
+
+def test_runs_endpoint_scopes_by_session_header(mock_mode):
+    """The X-Session-Id header must scope GET /runs — two tabs see only their
+    own runs even though both hit the same backend."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as client:
+        ra = client.post(
+            "/api/pipeline/run",
+            json={"query": {"name": "Sinpex GmbH", "jurisdiction": "DE"}},
+            headers={"X-Session-Id": "tab-A"},
+        ).json()["run_id"]
+        rb = client.post(
+            "/api/pipeline/run",
+            json={"query": {"name": "Tesco", "jurisdiction": "GB"}},
+            headers={"X-Session-Id": "tab-B"},
+        ).json()["run_id"]
+
+        runs_a = client.get("/api/pipeline/runs", headers={"X-Session-Id": "tab-A"}).json()["runs"]
+        runs_b = client.get("/api/pipeline/runs", headers={"X-Session-Id": "tab-B"}).json()["runs"]
+        assert [r["run_id"] for r in runs_a] == [ra]
+        assert [r["run_id"] for r in runs_b] == [rb]
+        # No header (e.g. CLI) sees both.
+        all_ids = {r["run_id"] for r in client.get("/api/pipeline/runs").json()["runs"]}
+        assert {ra, rb} <= all_ids
 
 
 def test_run_csv_upload_rejects_garbage(mock_mode):

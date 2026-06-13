@@ -252,12 +252,17 @@ async def run_pipeline(
     queries: list[QueryRow] | None = None,
     limit: int | None = None,
     output_dir: Path = csv_io.OUTPUT_DIR,
+    session_id: str | None = None,
 ) -> PipelineRunSummary:
     if queries is None:
         queries = csv_io.read_queries()
     if limit is not None:
         queries = queries[:limit]
 
+    # Bind this run (and every event it logs, including those in the child
+    # gather tasks below) to the calling browser tab's session, so concurrent
+    # runs from different tabs stay isolated in the event log.
+    event_log.set_session(session_id)
     run_id = event_log.new_run_id()
     await event_log.log_event(run_id, "run_started", rows=len(queries))
 

@@ -18,6 +18,7 @@ overridable via EVENT_DB_PATH (point it off the bind mount in compose).
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -28,6 +29,21 @@ import uuid
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# The browser tab / client session that owns the run currently being processed.
+# Set once per run (see set_session, called from run_pipeline) and read by
+# log_event_sync, so every event row is stamped with its session WITHOUT having
+# to thread the id through dozens of log_event call sites. asyncio.to_thread and
+# child tasks copy the current context, so the value set at run_pipeline entry
+# is visible to all nested (even threaded) event writes for that run.
+_session_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "event_session_id", default=""
+)
+
+
+def set_session(session_id: str | None) -> None:
+    """Bind the current async context to a client session id (or clear it)."""
+    _session_var.set(session_id or "")
 
 _ENV_DB_PATH = os.environ.get("EVENT_DB_PATH")
 DEFAULT_DB_PATH = (
@@ -47,9 +63,11 @@ CREATE TABLE IF NOT EXISTS events (
     query_id   TEXT,
     ts         REAL NOT NULL,
     event_type TEXT NOT NULL,
-    payload    TEXT NOT NULL DEFAULT '{}'
+    payload    TEXT NOT NULL DEFAULT '{}',
+    session_id TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_events_run ON events(run_id, seq);
+CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, run_id);
 """
 
 
@@ -69,6 +87,13 @@ def _open(path: Path) -> sqlite3.Connection:
     # Rollback journal, not WAL — survives bind-mount / cross-process access.
     conn.execute("PRAGMA journal_mode=DELETE")
     conn.executescript(_SCHEMA)
+    # Migrate older DBs that predate the session_id column (CREATE TABLE IF NOT
+    # EXISTS won't add a column to an existing table).
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+    if "session_id" not in cols:
+        conn.execute("ALTER TABLE events ADD COLUMN session_id TEXT NOT NULL DEFAULT ''")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, run_id)")
+        conn.commit()
     return conn
 
 
@@ -121,8 +146,14 @@ def new_run_id() -> str:
 
 
 def log_event_sync(run_id: str, event_type: str, query_id: str | None = None, **payload) -> None:
-    row = (run_id, query_id, time.time(), event_type, json.dumps(payload, default=str))
-    sql = "INSERT INTO events (run_id, query_id, ts, event_type, payload) VALUES (?, ?, ?, ?, ?)"
+    row = (
+        run_id, query_id, time.time(), event_type,
+        json.dumps(payload, default=str), _session_var.get(),
+    )
+    sql = (
+        "INSERT INTO events (run_id, query_id, ts, event_type, payload, session_id) "
+        "VALUES (?, ?, ?, ?, ?, ?)"
+    )
     with _lock:
         try:
             conn = _connection()
@@ -160,17 +191,25 @@ def _query(sql: str, params: tuple) -> list:
                 return []
 
 
-def list_runs(limit: int = 20) -> list[dict]:
+def list_runs(limit: int = 20, session_id: str | None = None) -> list[dict]:
+    """Recent runs, newest first. When `session_id` is given, only that client's
+    runs are returned — this is what keeps two browser tabs isolated (each tab
+    polls with its own session, so neither sees the other's runs)."""
+    where = ""
+    params: tuple = (limit,)
+    if session_id:
+        where = "WHERE session_id = ?"
+        params = (session_id, limit)
     rows = _query(
-        """
+        f"""
         SELECT run_id,
                MIN(ts)  AS started_at,
                MAX(ts)  AS last_event_at,
                COUNT(*) AS event_count,
                MAX(CASE WHEN event_type = 'run_completed' THEN 1 ELSE 0 END) AS completed
-        FROM events GROUP BY run_id ORDER BY MIN(ts) DESC LIMIT ?
+        FROM events {where} GROUP BY run_id ORDER BY MIN(ts) DESC LIMIT ?
         """,
-        (limit,),
+        params,
     )
     return [
         {

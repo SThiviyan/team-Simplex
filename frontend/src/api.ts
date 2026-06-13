@@ -124,12 +124,36 @@ export function parseQuery(raw: string): { name: string; jurisdiction: string } 
   return { name: text, jurisdiction: '' };
 }
 
+// --- Per-tab session identity ---------------------------------------------
+// A fresh browser tab gets its own sessionStorage, so each tab is its own
+// pipeline session: runs started in one tab never surface in another. The id is
+// sent on every pipeline request as the X-Session-Id header; the backend stamps
+// it on each event row and scopes GET /runs to it (so `runs[0]` is always THIS
+// tab's latest run).
+const SESSION_KEY = 'kyb_session_id';
+
+export function sessionId(): string {
+  let id = sessionStorage.getItem(SESSION_KEY);
+  if (!id) {
+    id =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    sessionStorage.setItem(SESSION_KEY, id);
+  }
+  return id;
+}
+
+function sessionHeaders(extra?: Record<string, string>): Record<string, string> {
+  return { 'X-Session-Id': sessionId(), ...extra };
+}
+
 /** Resolve one company through the full pipeline and return its CSV row. */
 export async function resolveCompany(raw: string): Promise<ExtractionResult> {
   const { name, jurisdiction } = parseQuery(raw);
   const r = await fetch('/api/pipeline/run', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: sessionHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ query: { name, jurisdiction } }),
   });
   if (!r.ok) {
@@ -180,7 +204,7 @@ export function confidenceBreakdown(
 }
 
 export async function listRuns(): Promise<PipelineRun[]> {
-  const r = await fetch('/api/pipeline/runs');
+  const r = await fetch('/api/pipeline/runs', { headers: sessionHeaders() });
   if (!r.ok) throw new Error(`runs failed: ${r.status}`);
   const data = await r.json();
   return data.runs as PipelineRun[];
@@ -192,7 +216,7 @@ export async function runEvents(
 ): Promise<{ events: PipelineEvent[]; last_seq: number }> {
   const url = new URL(`/api/pipeline/runs/${runId}/events`, window.location.origin);
   url.searchParams.set('after', String(after));
-  const r = await fetch(url.toString());
+  const r = await fetch(url.toString(), { headers: sessionHeaders() });
   if (!r.ok) throw new Error(`events failed: ${r.status}`);
   return r.json();
 }
@@ -208,7 +232,11 @@ export async function uploadPipelineCsv(
 ): Promise<{ blob: Blob; filename: string }> {
   const body = new FormData();
   body.append('file', file);
-  const r = await fetch('/api/pipeline/run-csv', { method: 'POST', body });
+  const r = await fetch('/api/pipeline/run-csv', {
+    method: 'POST',
+    body,
+    headers: sessionHeaders(),
+  });
   if (!r.ok) {
     const detail = await r.text().catch(() => '');
     throw new Error(`pipeline failed: ${r.status} ${detail.slice(0, 200)}`);

@@ -4,7 +4,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, UploadFile
+from fastapi import FastAPI, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -178,7 +178,10 @@ def _require_pipeline_ready() -> None:
 
 
 @app.post("/api/pipeline/run")
-async def pipeline_run(req: PipelineRunRequest | None = None):
+async def pipeline_run(
+    req: PipelineRunRequest | None = None,
+    x_session_id: str | None = Header(default=None),
+):
     """Run the registry-lookup chain: per-country MCP list -> agent -> filter -> Claude eval -> CSV."""
     from app.pipeline.models import QueryRow
     from app.pipeline.runner import run_pipeline
@@ -194,15 +197,19 @@ async def pipeline_run(req: PipelineRunRequest | None = None):
                 jurisdiction=req.query.jurisdiction,
             )
         ]
-    return await run_pipeline(queries=queries, limit=req.limit)
+    return await run_pipeline(queries=queries, limit=req.limit, session_id=x_session_id)
 
 
 @app.get("/api/pipeline/runs")
-async def pipeline_runs(limit: int = Query(default=20, ge=1, le=100)):
-    """Recent pipeline runs + status — entry point for the live-status UI."""
+async def pipeline_runs(
+    limit: int = Query(default=20, ge=1, le=100),
+    x_session_id: str | None = Header(default=None),
+):
+    """Recent pipeline runs + status — entry point for the live-status UI. Scoped
+    to the caller's session so two browser tabs never see each other's runs."""
     from app.pipeline import event_log
 
-    return {"runs": event_log.list_runs(limit=limit)}
+    return {"runs": event_log.list_runs(limit=limit, session_id=x_session_id)}
 
 
 @app.get("/api/pipeline/runs/{run_id}/events")
@@ -225,7 +232,10 @@ async def pipeline_run_events(
 
 
 @app.post("/api/pipeline/run-csv")
-async def pipeline_run_csv(file: UploadFile) -> FileResponse:
+async def pipeline_run_csv(
+    file: UploadFile,
+    x_session_id: str | None = Header(default=None),
+) -> FileResponse:
     """Eligibility gate: upload the test CSV, get the result CSV back — no manual steps.
 
     Delimiter (comma/semicolon) is auto-detected; the response is the finished
@@ -242,7 +252,7 @@ async def pipeline_run_csv(file: UploadFile) -> FileResponse:
             status_code=400,
             detail="No rows parsed — expected a CSV with columns query_id, name, jurisdiction",
         )
-    summary = await run_pipeline(queries=queries)
+    summary = await run_pipeline(queries=queries, session_id=x_session_id)
     output = Path(summary.output_csv)
     return FileResponse(output, media_type="text/csv", filename=output.name)
 
