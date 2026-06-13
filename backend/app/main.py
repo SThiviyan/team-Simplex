@@ -71,12 +71,13 @@ async def csv_search_endpoint(
     # Run the matching layer directly on the in-memory gathered records (the
     # name/jurisdiction come from the same parsed input). No JSON reload.
     # Mock when there's no key (or PIPELINE_MOCK) so the chain never hard-fails.
-    mock = settings.pipeline_mock or not os.environ.get("ANTHROPIC_API_KEY")
+    # `settings.anthropic_api_key` honours both the real env and `.env`.
+    have_key = bool(settings.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY"))
+    mock = settings.pipeline_mock or not have_key
     payload["winners"] = await match_payload(
         payload,
         model=settings.anthropic_model,
         mock=mock,
-        owner_lookup=settings.owner_lookup_enabled,
     )
     # Drop the raw gathered rows from the HTTP response; they live in the JSON
     # file (and are summarised by `winners`/`count` here).

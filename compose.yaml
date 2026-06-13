@@ -25,6 +25,11 @@ services:
     ports:
       - "8080:8080"
     env_file:
+      # Carries ANTHROPIC_API_KEY (+ register keys) into the container. With a
+      # key the matching (semantic-filter) runs for real; without one the chain
+      # falls back to deterministic stubs. NOTE: do NOT also list the key under
+      # `environment:` — a bare, host-unset var can inject an empty value that
+      # overrides this file and silently forces mock mode.
       - path: .env
         required: false
 

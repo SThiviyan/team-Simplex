@@ -1,9 +1,19 @@
+import os
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# The real `.env` lives at the repo root, but the app is usually launched from
+# `backend/`. Resolve both by absolute path so the key is found regardless of
+# CWD (in the Docker image neither exists and os.environ wins — that's fine).
+_BACKEND_DIR = Path(__file__).resolve().parents[1]  # .../backend
+_REPO_ROOT = Path(__file__).resolve().parents[2]  # repo root
+_ENV_FILES = (str(_REPO_ROOT / ".env"), str(_BACKEND_DIR / ".env"))
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=_ENV_FILES, extra="ignore")
 
     port: int = Field(default=8080, description="Cloud Run injects PORT=8080")
 
@@ -33,7 +43,15 @@ class Settings(BaseSettings):
     )
 
     # --- Pipeline (registry-lookup agent chain) ---
-    # The Anthropic SDK reads ANTHROPIC_API_KEY from the environment itself.
+    # The Anthropic SDK reads ANTHROPIC_API_KEY from os.environ. We also surface
+    # it here so a key supplied via `.env` (pydantic) is honoured — see the
+    # os.environ re-export below — and so the mock-gating in main.py can decide
+    # whether real LLM/web-search calls are possible.
+    anthropic_api_key: str | None = Field(
+        default=None,
+        description="Anthropic API key for the matching (semantic-filter) LLM calls "
+        "(env or .env). Without it, the chain falls back to deterministic stubs.",
+    )
     anthropic_model: str = Field(
         default="claude-opus-4-8", description="Model for the Layer-1 agent and the eval step"
     )
@@ -49,10 +67,14 @@ class Settings(BaseSettings):
         default=4,
         description="How many query rows are processed in parallel during a batch run",
     )
-    owner_lookup_enabled: bool = Field(
-        default=True,
-        description="After a company is matched, web-search its owner and include it in the output",
-    )
 
 
 settings = Settings()
+
+# The Anthropic SDK (and the mock-gating checks) read ANTHROPIC_API_KEY straight
+# from os.environ. If the key was provided via `.env` (parsed by pydantic) but
+# isn't exported in the process environment, re-export it here so a directly-run
+# `uvicorn` — not just docker-compose's env_file — performs real LLM/web-search
+# calls instead of silently falling back to mock.
+if settings.anthropic_api_key and not os.environ.get("ANTHROPIC_API_KEY"):
+    os.environ["ANTHROPIC_API_KEY"] = settings.anthropic_api_key

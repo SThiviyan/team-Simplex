@@ -19,7 +19,6 @@ from app.matching.company_matcher import (
     candidate_to_dict,
     find_candidates,
 )
-from app.matching.owner_lookup import find_owner
 from app.matching.semantic_filter import (
     DECISION_MATCH,
     DEFAULT_MODEL,
@@ -28,10 +27,6 @@ from app.matching.semantic_filter import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Field names on a winning-candidate record (emitted by the gather layer).
-_NAME_FIELD = "name_normalized_register_name"
-_JURISDICTION_FIELD = "jurisdiction_confirmed"
 
 
 def run_matching(
@@ -114,7 +109,6 @@ async def match_payload(
     score_cutoff: float = 0.5,
     model: str = DEFAULT_MODEL,
     mock: bool = False,
-    owner_lookup: bool = True,
 ) -> list[dict[str, Any]]:
     """Run the matching layer for every query row in a gather-layer ``payload``.
 
@@ -159,20 +153,6 @@ async def match_payload(
             model=model,
             mock=mock,
         )
-        # Once a result is determined (a confirmed match), web-search its owner
-        # and attach it. Only for real matches; non-matches carry owner=None.
-        owner = None
-        winner = result.get("winning_candidate")
-        if owner_lookup and result.get("decision") == DECISION_MATCH and winner:
-            owner = await asyncio.to_thread(
-                find_owner,
-                winner.get(_NAME_FIELD) or name,
-                winner.get(_JURISDICTION_FIELD) or jurisdiction,
-                registry_id=winner.get("registry_id"),
-                model=model,
-                mock=mock,
-            )
-        result["owner"] = owner
         return {"query_id": qid, "name": name, "jurisdiction": jurisdiction, **result}
 
     return list(await asyncio.gather(*(_one(q) for q in queries)))
