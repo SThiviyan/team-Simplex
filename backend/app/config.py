@@ -62,11 +62,11 @@ class Settings(BaseSettings):
         "scrapers/Apify set their own higher search_timeout.)",
     )
     gather_deadline: float = Field(
-        default=45.0,
-        description="Hard overall cap (s) on the whole gather: after it, whatever sources "
-        "responded are used and the rest are cancelled — the row never hangs. Set above the "
-        "slowest source you actually want to wait for (NorthData ~35s); lower it for a "
-        "snappier UI that escalates to web search sooner.",
+        default=12.0,
+        description="Hard cap (s) on EACH gather tier: after it, whatever sources responded "
+        "are used and the rest are cancelled — the row never hangs. Foundation sources run "
+        "first; the moment one pins a registry_id the supplement tier (Wikidata) is skipped. "
+        "Raise to ~40 in prod when the slow Apify NorthData actor (~35s) should contribute.",
     )
     handelsregister_scrape_fallback: bool = Field(
         default=True,
@@ -80,9 +80,11 @@ class Settings(BaseSettings):
         "opt-in equivalent",
     )
     enrichment_web_fill_timeout: float = Field(
-        default=20.0,
-        description="Hard wall-clock cap (s) on the Layer-2 web-search fill. On timeout the "
-        "row keeps what it has and missing fields stay blank — never a hang.",
+        default=35.0,
+        description="Hard wall-clock cap (s) on the Layer-2 web-search fill. 20s was too tight "
+        "— the server-side web search needs longer to fill several Tier-A fields (VAT, NACE, "
+        "address) and was timing out into blanks; 35s lets it complete while still bounding the "
+        "row (the gather is capped separately). Lower it to trade Tier-A depth for speed.",
     )
     # Precision-over-recall guard: the semantic matcher must NOT emit a 'match'
     # it rates below this. Below the floor it abstains (no_match -> blank) rather

@@ -103,19 +103,38 @@ async def _bounded_search(p: SearchProvider, name: str, limit: int) -> list[Sear
     return await asyncio.wait_for(cached_search(p, name, limit), timeout=timeout)
 
 
-async def _gather(
-    selected: list[SearchProvider], name: str, jurisdiction: str | None, limit: int
+def _filter_jurisdiction(
+    results: list[SearchResult], jurisdiction: str | None
 ) -> list[SearchResult]:
-    from app.config import settings
+    if not jurisdiction:
+        return results
+    want = jurisdiction.upper()
+    want_country = want.split("-")[0]
 
-    # Run all sources concurrently, but cap the WHOLE gather: after
-    # gather_deadline, use whatever responded and cancel the stragglers. A slow or
-    # blocked primary (e.g. the unreachable handelsregister.de scrape) can never
-    # make the row hang — it just doesn't contribute, and the agent escalates
-    # (other sources, then web search). Per-provider search_timeout still bounds
-    # each call individually.
-    tasks = [asyncio.ensure_future(_bounded_search(p, name, limit)) for p in selected]
-    done, pending = await asyncio.wait(tasks, timeout=settings.gather_deadline)
+    def in_jurisdiction(r: SearchResult) -> bool:
+        # Match on country, so a "US" query keeps state-level records ("US-CA",
+        # "US-NY") — the US/Canada filing number is scoped to the state, and GLEIF
+        # reports jurisdiction at that granularity. A state query still accepts
+        # the bare country.
+        rj = (r.jurisdiction or "").upper()
+        if not rj:
+            return False
+        return rj == want or rj.split("-")[0] == want_country
+
+    return [r for r in results if in_jurisdiction(r)]
+
+
+async def _run_tier(
+    providers: list[SearchProvider], name: str, limit: int, deadline: float
+) -> list[SearchResult]:
+    """Run one tier of providers concurrently, capped by the overall deadline:
+    after it, use whatever responded and cancel the stragglers, so a slow/blocked
+    source can never make the row hang. Per-provider search_timeout still bounds
+    each call individually."""
+    if not providers:
+        return []
+    tasks = [asyncio.ensure_future(_bounded_search(p, name, limit)) for p in providers]
+    done, pending = await asyncio.wait(tasks, timeout=deadline)
     for t in pending:
         t.cancel()
     if pending:
@@ -128,22 +147,28 @@ async def _gather(
             continue
         if isinstance(b, list):
             results.extend(b)
-    if jurisdiction:
-        want = jurisdiction.upper()
-        want_country = want.split("-")[0]
+    return results
 
-        def in_jurisdiction(r: SearchResult) -> bool:
-            # Match on country, so a "US" query keeps state-level records
-            # ("US-CA", "US-NY") — the US/Canada filing number is scoped to the
-            # state, and GLEIF reports jurisdiction at that granularity. A
-            # state-specific query ("US-CA") still accepts the bare country.
-            rj = (r.jurisdiction or "").upper()
-            if not rj:
-                return False
-            return rj == want or rj.split("-")[0] == want_country
 
-        results = [r for r in results if in_jurisdiction(r)]
-    return sorted(results, key=lambda r: r.score, reverse=True)
+async def _gather(
+    selected: list[SearchProvider], name: str, jurisdiction: str | None, limit: int
+) -> list[SearchResult]:
+    """Gather every relevant source concurrently, capped by gather_deadline.
+
+    The country's source hierarchy (data/source_ranking.json) is FOUNDATION-first
+    — the national register(s) + GLEIF carry the official registry_id; Wikidata is
+    a SUPPLEMENT that may only FILL extra fields, never supply the identity (it has
+    no registry_id). That hierarchy is enforced where it matters — winner
+    selection and the enrichment field-merge (source_ranking.order_records) — so
+    Wikidata can never win the identity. We still GATHER it (it's cheap and its
+    QID/website feeds the fast deterministic Impressum + cross-reference
+    enrichment); skipping it only starved enrichment. Web search is the agent's
+    last resort when no foundation source matched at all.
+    """
+    from app.config import settings
+
+    results = await _run_tier(selected, name, limit, settings.gather_deadline)
+    return sorted(_filter_jurisdiction(results, jurisdiction), key=lambda r: r.score, reverse=True)
 
 
 async def search_jurisdiction(
