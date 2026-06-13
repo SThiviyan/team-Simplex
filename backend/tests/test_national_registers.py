@@ -174,7 +174,7 @@ def test_pulled_mcp_connectors_metadata_and_wiring():
 
     names = {p.name for p in all_providers()}
     assert {"ariregister", "rpo", "orgbook", "rasham", "rsk", "kvk"} <= names
-    assert len(all_providers()) == 19
+    assert len(all_providers()) == 20
 
 
 async def test_kvk_self_disables_without_key(monkeypatch):

@@ -34,6 +34,7 @@
   "CA": ["orgbook", "gleif", "wikidata"],
   "IL": ["rasham", "gleif", "wikidata"],
   "IS": ["rsk", "gleif", "wikidata"],
+  "LV": ["ur_lv", "gleif", "wikidata"],
 
   "AT": ["gleif", "wikidata"],
   "CH": ["gleif", "wikidata"],

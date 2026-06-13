@@ -24,6 +24,7 @@ from app.search.providers.rasham_il import RashamIlSearchProvider
 from app.search.providers.rpo_sk import RpoSkSearchProvider
 from app.search.providers.rsk_is import RskIsSearchProvider
 from app.search.providers.sec import SecSearchProvider
+from app.search.providers.ur_lv import UrLvSearchProvider
 from app.search.providers.wikidata import WikidataSearchProvider
 
 
@@ -50,4 +51,5 @@ def all_providers() -> list[SearchProvider]:
         OrgbookCaSearchProvider(),  # CA / British Columbia (keyless)
         RashamIlSearchProvider(),  # IL (keyless)
         RskIsSearchProvider(),  # IS (keyless; scraped)
+        UrLvSearchProvider(),  # LV (keyless)
     ]
