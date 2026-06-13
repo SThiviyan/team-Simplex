@@ -73,7 +73,10 @@ async def csv_search_endpoint(
     # Mock when there's no key (or PIPELINE_MOCK) so the chain never hard-fails.
     mock = settings.pipeline_mock or not os.environ.get("ANTHROPIC_API_KEY")
     payload["winners"] = await match_payload(
-        payload, model=settings.anthropic_model, mock=mock
+        payload,
+        model=settings.anthropic_model,
+        mock=mock,
+        owner_lookup=settings.owner_lookup_enabled,
     )
     # Drop the raw gathered rows from the HTTP response; they live in the JSON
     # file (and are summarised by `winners`/`count` here).

@@ -23,23 +23,13 @@ class Settings(BaseSettings):
         default=None, description="Companies House REST API key (HTTP Basic username)"
     )
 
-    # --- New Zealand Companies Office / NZBN register ---------------------
-    # Optional, keyed source. Free subscription key from the NZ Business API
-    # portal (portal.api.business.govt.nz), sent as Ocp-Apim-Subscription-Key.
-    nzbn_api_key: str | None = Field(
-        default=None, description="NZBN API v5 subscription key (Ocp-Apim-Subscription-Key)"
-    )
-
-    # --- AJPES (Slovenian Business Register, PRS / restPrsInfo) -----------
-    # Optional, keyed source. AJPES issues a username/password and authorises a
-    # data set ("shema"); the provider disables itself unless user + password
-    # are set. https://www.ajpes.si/restPrsInfo/swagger
-    ajpes_user: str | None = Field(default=None, description="AJPES restPrsInfo username (uporabnik)")
-    ajpes_password: str | None = Field(
-        default=None, description="AJPES restPrsInfo password (geslo)"
-    )
-    ajpes_schema: str | None = Field(
-        default=None, description="AJPES authorised data-set code (ident.shema)"
+    # --- KVK (Netherlands commercial register) ----------------------------
+    # Defaults to KVK's public TEST key (synthetic data, test endpoint) so the
+    # provider works out of the box. Set a production key from developers.kvk.nl
+    # (paid per query) to switch to the live endpoint and real data.
+    kvk_api_key: str | None = Field(
+        default="l7xx1f2691f2520d487b902f4e0b57a0b197",
+        description="KVK API key (sent as 'apikey'); default is the public test key",
     )
 
     # --- Pipeline (registry-lookup agent chain) ---
@@ -58,6 +48,10 @@ class Settings(BaseSettings):
     pipeline_concurrency: int = Field(
         default=4,
         description="How many query rows are processed in parallel during a batch run",
+    )
+    owner_lookup_enabled: bool = Field(
+        default=True,
+        description="After a company is matched, web-search its owner and include it in the output",
     )
 
 
