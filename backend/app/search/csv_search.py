@@ -9,7 +9,6 @@ The combined results are also written to a JSON file in the repo so they can be
 opened in an IDE.
 """
 
-import asyncio
 import csv
 import io
 import json
@@ -17,8 +16,8 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 from app.search.base import SearchProvider, SearchResult, normalize_country
+from app.search.gather import run_tier, split_cost
 from app.search.resolver import _normalise
-from app.search.search_cache import cached_search
 
 # Lands at backend/search_results.json — inside the bind-mounted repo, so it
 # shows up in the IDE.
@@ -91,18 +90,6 @@ def select_providers(
     return [p for p in providers if p.jurisdictions is None or cc in p.jurisdictions]
 
 
-async def _bounded_search(p: SearchProvider, name: str, limit: int) -> list[SearchResult]:
-    """One provider's search under a hard timeout, so a slow/blocked source can
-    never stall the whole row. The cap is the provider's own `search_timeout`
-    when set (slow scrapers need more than the fast-API default), else
-    settings.provider_timeout. Timeouts/errors are non-fatal — they surface as
-    exceptions that _gather drops."""
-    from app.config import settings
-
-    timeout = p.search_timeout or settings.provider_timeout
-    return await asyncio.wait_for(cached_search(p, name, limit), timeout=timeout)
-
-
 def _filter_jurisdiction(
     results: list[SearchResult], jurisdiction: str | None
 ) -> list[SearchResult]:
@@ -122,32 +109,6 @@ def _filter_jurisdiction(
         return rj == want or rj.split("-")[0] == want_country
 
     return [r for r in results if in_jurisdiction(r)]
-
-
-async def _run_tier(
-    providers: list[SearchProvider], name: str, limit: int, deadline: float
-) -> list[SearchResult]:
-    """Run one tier of providers concurrently, capped by the overall deadline:
-    after it, use whatever responded and cancel the stragglers, so a slow/blocked
-    source can never make the row hang. Per-provider search_timeout still bounds
-    each call individually."""
-    if not providers:
-        return []
-    tasks = [asyncio.ensure_future(_bounded_search(p, name, limit)) for p in providers]
-    done, pending = await asyncio.wait(tasks, timeout=deadline)
-    for t in pending:
-        t.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)  # let cancellations settle
-    results: list[SearchResult] = []
-    for t in done:
-        try:
-            b = t.result()
-        except Exception:
-            continue
-        if isinstance(b, list):
-            results.extend(b)
-    return results
 
 
 async def _gather(
@@ -171,15 +132,18 @@ async def _gather(
     """
     from app.config import settings
 
-    free = [p for p in selected if getattr(p, "cost", None) != "premium"]
-    premium = [p for p in selected if getattr(p, "cost", None) == "premium"]
+    free, premium = split_cost(selected)
 
     results = _filter_jurisdiction(
-        await _run_tier(free, name, limit, settings.gather_deadline), jurisdiction
+        await run_tier(free, name, limit, settings.gather_deadline), jurisdiction
     )
     if premium and not any(r.registry_id for r in results):
+        # Premium gets its OWN (longer) deadline: the NorthData actor needs ~35s
+        # cold, so the 12s free-tier deadline cancelled it every time. It runs only
+        # here (free tier found no registry_id), so the longer budget is paid only
+        # when the row would otherwise abstain.
         results += _filter_jurisdiction(
-            await _run_tier(premium, name, limit, settings.gather_deadline), jurisdiction
+            await run_tier(premium, name, limit, settings.premium_gather_deadline), jurisdiction
         )
     return sorted(results, key=lambda r: r.score, reverse=True)
 

@@ -1,18 +1,22 @@
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# The .env lives at the repo root, but the backend is often run with CWD=backend/
+# (uv run, the CLI, pytest). A bare ``env_file=".env"`` resolves relative to CWD,
+# so those runs would silently load NO keys (Apify/Companies House disabled) while
+# docker compose — which injects .env as real env vars — works fine. Pin both the
+# repo-root .env (absolute) and a local backend/.env so every entrypoint agrees.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(str(_REPO_ROOT / ".env"), ".env"), extra="ignore"
+    )
 
     port: int = Field(default=8080, description="Cloud Run injects PORT=8080")
-
-    # --- Handelsregister.ai (German commercial register) ------------------
-    # Optional, keyed source. If unset, the provider disables itself and the
-    # keyless GLEIF + Wikidata sources still work.
-    handelsregister_api_key: str | None = Field(
-        default=None, description="handelsregister.ai API key (sent as x-api-key)"
-    )
 
     # --- Optional keyed register sources (each provider disables itself when
     # its key is unset, so the keyless stack keeps working) -------------------
@@ -63,10 +67,17 @@ class Settings(BaseSettings):
     )
     gather_deadline: float = Field(
         default=12.0,
-        description="Hard cap (s) on EACH gather tier: after it, whatever sources responded "
+        description="Hard cap (s) on the FREE gather tier: after it, whatever sources responded "
         "are used and the rest are cancelled — the row never hangs. Foundation sources run "
-        "first; the moment one pins a registry_id the supplement tier (Wikidata) is skipped. "
-        "Raise to ~40 in prod when the slow Apify NorthData actor (~35s) should contribute.",
+        "first; the moment one pins a registry_id the supplement tier (Wikidata) is skipped.",
+    )
+    premium_gather_deadline: float = Field(
+        default=40.0,
+        description="Hard cap (s) on the PREMIUM (Apify) gather tier, kept SEPARATE from "
+        "gather_deadline because the NorthData actor needs ~35s cold — at the 12s free-tier "
+        "deadline it was cancelled every time and never contributed. Premium runs only as a "
+        "cost-gated fallback (after the free tier finds no registry_id), so the longer budget "
+        "is paid only when actually needed. Lower it to trade DE/AT/CH NorthData depth for speed.",
     )
     handelsregister_scrape_fallback: bool = Field(
         default=True,
@@ -119,16 +130,18 @@ class Settings(BaseSettings):
         default="claude-opus-4-8", description="Model for the Layer-1 research agent"
     )
     matching_model: str = Field(
-        default="claude-haiku-4-5-20251001",
-        description="Model for the matching-layer semantic filter — a constrained forced-tool "
-        "pick-from-candidates task where Haiku matched Sonnet's accuracy at ~2x the speed "
-        "(measured on the truth set), so it is the default for speed",
+        default="claude-opus-4-8",
+        description="Model for the matching-layer semantic filter. Haiku previously matched "
+        "Sonnet's accuracy at ~2x speed on the truth set, so speed-tuned runs can drop back to "
+        "claude-haiku-4-5-20251001; this default is Opus for maximum entity-disambiguation "
+        "accuracy (sibling/group-name confusion is the dominant non-coverage error) over speed.",
     )
     enrichment_model: str = Field(
-        default="claude-sonnet-4-6",
-        description="Model for the Layer-2 web-search enrichment fill. Kept on Sonnet: Haiku "
-        "collapsed Tier A extraction (incorporation_date 0/50) in the measured run, so the "
-        "enrichment model is split from the (faster) matcher model",
+        default="claude-opus-4-8",
+        description="Model for the Layer-2 web-search enrichment fill. Opus for the deepest Tier "
+        "A/B extraction (address, VAT, NACE, officers). Sonnet (claude-sonnet-4-6) is the faster "
+        "floor that still extracts Tier A; Haiku collapsed it (incorporation_date 0/50), so never "
+        "go below Sonnet here.",
     )
     pipeline_mock: bool = Field(
         default=False,
@@ -150,6 +163,14 @@ class Settings(BaseSettings):
         "too high floods the Anthropic API and triggers 429 backoff that slows the whole batch "
         "DOWN (measured: 50 -> 429 storms -> ~10min for 50 rows; ~12 stays under the limit). "
         "Raise only if your Anthropic tier has lots of headroom.",
+    )
+    row_deadline: float = Field(
+        default=180.0,
+        description="Hard wall-clock cap (s) on a SINGLE query row end-to-end (agent rounds + "
+        "gather + enrichment). A row that blows past it abstains with no_match_reason="
+        "'pipeline_timeout' instead of holding its concurrency slot for minutes — under a 429/529 "
+        "storm one stuck row otherwise throttles the whole batch. Generous by default so it only "
+        "trips genuinely-stuck rows, not normal slow ones (premium gather ~40s + web-fill ~35s).",
     )
     batch_agent_rounds: int = Field(
         default=2,

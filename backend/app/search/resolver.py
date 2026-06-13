@@ -12,7 +12,6 @@ Given a name and (optionally) a jurisdiction, it:
 Deterministic and keyless — no LLM in the path.
 """
 
-import asyncio
 import re
 from difflib import SequenceMatcher
 
@@ -157,17 +156,23 @@ class CompanyResolver:
     async def resolve(self, query: str, jurisdiction: str | None = None, limit: int = 10) -> dict:
         from app.search.base import normalize_country
 
+        from app.config import settings
+        from app.search.gather import run_tier, split_cost
+
         jurisdiction = normalize_country(jurisdiction)  # "UK" -> "GB" etc.
         selected = select_providers(self.providers, jurisdiction)
 
-        batches = await asyncio.gather(
-            *(p.search(query, limit=limit) for p in selected),
-            return_exceptions=True,
-        )
-        results: list[SearchResult] = []
-        for batch in batches:
-            if isinstance(batch, list):
-                results.extend(batch)
+        # Bounded, cost-tiered gather (shared with the CSV/MCP path): the free
+        # tier runs under gather_deadline; the slow/paid Apify tier runs only as a
+        # fallback when no free source pinned a registry_id, under its own longer
+        # deadline. A bare asyncio.gather here used to wait for the slowest source
+        # with no cap and hung the live UI.
+        free, premium = split_cost(selected)
+        results = await run_tier(free, query, limit, settings.gather_deadline)
+        if premium and not any(r.registry_id for r in results):
+            results += await run_tier(
+                premium, query, limit, settings.premium_gather_deadline
+            )
 
         specificity = _specificity(query)
         clusters = [_score_cluster(c, len(selected), query, specificity) for c in _cluster(results)]

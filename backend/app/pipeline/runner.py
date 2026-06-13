@@ -228,7 +228,23 @@ async def _process_guarded(
             name=query.name, jurisdiction=query.jurisdiction,
         )
         try:
-            result = await process_query(query, run_id)
+            # Hard per-row wall-clock cap: a row stuck behind a 429/529 retry storm
+            # (or a hung source) must not hold its concurrency slot for minutes and
+            # throttle the whole batch. On timeout the row abstains honestly.
+            result = await asyncio.wait_for(
+                process_query(query, run_id), timeout=settings.row_deadline
+            )
+        except (asyncio.TimeoutError, TimeoutError):
+            logger.warning("pipeline row %s exceeded row_deadline; abstaining", query.query_id)
+            await event_log.log_event(
+                run_id, "error", query.query_id, kind="row_timeout",
+                message=f"exceeded row_deadline={settings.row_deadline}s",
+            )
+            result = ExtractionResult(
+                query_id=query.query_id,
+                confidence=0.0,
+                no_match_reason="pipeline_timeout",
+            )
         except Exception as exc:
             # One bad row must not kill the batch — emit an honest error row instead.
             logger.exception("pipeline failed for query %s", query.query_id)
