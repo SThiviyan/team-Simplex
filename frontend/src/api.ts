@@ -148,6 +148,17 @@ function sessionHeaders(extra?: Record<string, string>): Record<string, string> 
   return { 'X-Session-Id': sessionId(), ...extra };
 }
 
+/** Supported jurisdictions (ISO alpha-2) for the search selector. */
+export async function listJurisdictions(): Promise<string[]> {
+  try {
+    const r = await fetch('/api/pipeline/jurisdictions', { headers: sessionHeaders() });
+    if (!r.ok) return [];
+    return ((await r.json()).jurisdictions as string[]) ?? [];
+  } catch {
+    return [];
+  }
+}
+
 /** Resolve one company through the full pipeline and return its CSV row. */
 export async function resolveCompany(raw: string): Promise<ExtractionResult> {
   const { name, jurisdiction } = parseQuery(raw);

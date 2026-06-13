@@ -200,6 +200,21 @@ async def pipeline_run(
     return await run_pipeline(queries=queries, limit=req.limit, session_id=x_session_id)
 
 
+@app.get("/api/pipeline/jurisdictions")
+async def pipeline_jurisdictions():
+    """Supported jurisdictions (ISO-3166 alpha-2), for the UI's jurisdiction
+    selector — the union of every provider's covered countries. Anything not
+    listed still works (it falls back to GLEIF/Wikidata/web), but these are the
+    ones a dedicated source covers."""
+    from app.search.sources import all_providers
+
+    covered: set[str] = set()
+    for p in all_providers():
+        for cc in p.jurisdictions or ():
+            covered.add(cc.upper())
+    return {"jurisdictions": sorted(covered)}
+
+
 @app.get("/api/pipeline/runs")
 async def pipeline_runs(
     limit: int = Query(default=20, ge=1, le=100),
