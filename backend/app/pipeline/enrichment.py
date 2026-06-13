@@ -375,6 +375,13 @@ def _missing_fields(result: ExtractionResult) -> list[str]:
     return [f for f in ENRICHABLE_FIELDS if not getattr(result, f)]
 
 
+def _missing_tier_a(result: ExtractionResult) -> list[str]:
+    """Missing fields EXCLUDING Tier-B (officers) — used to gate the expensive
+    web-fill: spending a Sonnet+web_search call just to chase officers (a partial-
+    coverage Tier-B field) isn't worth the latency."""
+    return [f for f in ENRICHABLE_FIELDS if f != "officers" and not getattr(result, f)]
+
+
 # Strings that are JSON fragments / null markers, not real values. A web-search
 # payload occasionally leaks one of these into a field; they must never reach
 # the CSV. Matches ": null,", ":null", "null", "none", "n/a", "{...}" fragments.
@@ -627,7 +634,10 @@ _WEB_OUTPUT_FORMAT = {
     "schema": EnrichmentPayload.model_json_schema(),
 }
 
-MAX_WEB_CONTINUATIONS = 4
+# The web-search fill may pause_turn (server-side search) and resume. The first
+# round almost always answers; 2 covers one pause. Kept low because each round is
+# a full Sonnet round-trip and this pass is the enrich-phase latency tail.
+MAX_WEB_CONTINUATIONS = 2
 
 
 async def _web_fill(
@@ -766,9 +776,25 @@ async def enrich_result(
         # Web fill only for confidently identified entities: enriching the
         # wrong company is worse than returning blanks. Opt-out for fast batches
         # (it's the main per-row LLM latency cost) — like MCP's owner-lookup flag.
-        if settings.enrichment_web_fill and result.confidence >= 0.7 and _missing_fields(result):
+        if (
+            settings.enrichment_web_fill
+            and result.confidence >= 0.7
+            and _missing_tier_a(result)  # skip the costly call to chase only officers
+        ):
             try:
-                result = await _web_fill(result, query, run_id)
+                # Hard wall-clock cap: web_fill (Sonnet + web_search, up to
+                # MAX_WEB_CONTINUATIONS rounds) is the enrich-phase tail and has no
+                # SDK-level timeout. On timeout keep what we have — missing fields
+                # stay blank (safe abstention), never a hang.
+                result = await asyncio.wait_for(
+                    _web_fill(result, query, run_id),
+                    timeout=settings.enrichment_web_fill_timeout,
+                )
+            except TimeoutError:
+                logger.warning("web enrichment timed out for %s; leaving fields blank", query.query_id)
+                await event_log.log_event(
+                    run_id, "enrichment_web_fill", query.query_id, timed_out=True
+                )
             except Exception:
                 logger.exception("web enrichment failed for %s", query.query_id)
         if result.status:

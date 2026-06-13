@@ -71,6 +71,11 @@ class Settings(BaseSettings):
         "On = more datapoints (scored); off = faster batches. The MCP branch's owner-lookup "
         "opt-in equivalent",
     )
+    enrichment_web_fill_timeout: float = Field(
+        default=20.0,
+        description="Hard wall-clock cap (s) on the Layer-2 web-search fill. On timeout the "
+        "row keeps what it has and missing fields stay blank — never a hang.",
+    )
     # --- Persistent caching (testing / repeated lookups) --------------------
     search_cache_ttl_seconds: float = Field(
         default=7 * 24 * 3600.0,
