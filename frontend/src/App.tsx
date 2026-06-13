@@ -10,6 +10,8 @@ import {
   parseQuery,
   PipelineEvent,
   resolveCompany,
+  ResultSource,
+  resultSources,
 } from './api';
 
 type State =
@@ -137,7 +139,12 @@ function Results({
         finalConfidence={state.result.confidence}
         hasId={!!state.result.registry_id}
       />
-      <ResultCard query={state.query} r={state.result} breakdown={confidenceBreakdown(events)} />
+      <ResultCard
+        query={state.query}
+        r={state.result}
+        breakdown={confidenceBreakdown(events)}
+        sources={resultSources(events)}
+      />
     </section>
   );
 }
@@ -146,10 +153,12 @@ function ResultCard({
   query,
   r,
   breakdown,
+  sources = [],
 }: {
   query: string;
   r: ExtractionResult;
   breakdown?: ConfidenceComponent[];
+  sources?: ResultSource[];
 }) {
   const pct = Math.round((r.confidence ?? 0) * 100);
   const flag = r.confidence_flag ?? (r.registry_id ? 'probable' : 'not_found');
@@ -242,6 +251,35 @@ function ResultCard({
           <span className="text-[11px] text-muted">—</span>
         )}
       </div>
+
+      {/* All sources that corroborated this entity — provenance for every filled
+          field, so enrichment is transparent rather than opaque. */}
+      {sources.length > 0 ? (
+        <div className="space-y-1 border-t border-line pt-2">
+          <p className="text-[10px] uppercase tracking-wide text-muted">
+            Sources ({sources.length})
+          </p>
+          <ul className="space-y-0.5 text-[11px]">
+            {sources.map((s, i) => (
+              <li key={`${s.provider}-${s.url}-${i}`} className="flex items-baseline gap-2">
+                <span className="shrink-0 font-mono text-muted">{s.provider ?? 'web'}</span>
+                {s.url ? (
+                  <a
+                    href={s.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="break-all text-accent hover:text-ink transition-colors"
+                  >
+                    {s.url}
+                  </a>
+                ) : (
+                  <span className="text-muted/60">—</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {!matched ? (
         <p className="text-[12px] text-muted text-balance">

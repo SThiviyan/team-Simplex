@@ -203,6 +203,20 @@ export function confidenceBreakdown(
   return undefined;
 }
 
+// A source that corroborated the winning entity (provenance list).
+export type ResultSource = { provider: string | null; url: string | null };
+
+/** The sources that backed the result, from the latest enrichment_done event. */
+export function resultSources(events: PipelineEvent[]): ResultSource[] {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].event_type === 'enrichment_done') {
+      const s = (events[i].payload as { sources?: unknown }).sources;
+      return Array.isArray(s) ? (s as ResultSource[]) : [];
+    }
+  }
+  return [];
+}
+
 export async function listRuns(): Promise<PipelineRun[]> {
   const r = await fetch('/api/pipeline/runs', { headers: sessionHeaders() });
   if (!r.ok) throw new Error(`runs failed: ${r.status}`);

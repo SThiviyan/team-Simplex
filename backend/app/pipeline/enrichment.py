@@ -402,6 +402,26 @@ def _missing_fields(result: ExtractionResult) -> list[str]:
     return [f for f in ENRICHABLE_FIELDS if not getattr(result, f)]
 
 
+def _collect_sources(result: ExtractionResult, matched: list[dict]) -> list[dict]:
+    """The distinct sources that corroborated the winning entity, in hierarchy
+    order (matched is already foundation-first). Surfaced to the UI as a per-row
+    'where this came from' provenance list, so filling a field (VAT, NACE, …) is
+    transparent rather than opaque."""
+    out: list[dict] = []
+    seen: set[tuple] = set()
+    for r in matched:
+        provider = r.get("provider")
+        url = r.get("source") or r.get("url")
+        key = (provider, url)
+        if provider and key not in seen:
+            seen.add(key)
+            out.append({"provider": provider, "url": url})
+    # The final answer's own citation, if it isn't already represented.
+    if result.source and all(s.get("url") != result.source for s in out):
+        out.append({"provider": None, "url": result.source})
+    return out
+
+
 def _missing_tier_a(result: ExtractionResult) -> list[str]:
     """Missing fields EXCLUDING Tier-B (officers) — used to gate the expensive
     web-fill: spending a Sonnet+web_search call just to chase officers (a partial-
@@ -569,8 +589,13 @@ async def _impressum_fill(
     website = details.get("website")
     if not website:
         return result, None
+    # The Impressum (DE/AT mandated) reliably carries the registry number+court,
+    # representatives, address AND the VAT id — so run it whenever any of those
+    # is still missing (vat_number was previously omitted, dropping a field the
+    # page readily has), or when we still lack a registry_id to corroborate.
     wants_fill = bool(
-        {"registry_court", "officers", "registered_address"} & set(_missing_fields(result))
+        {"registry_court", "officers", "registered_address", "vat_number"}
+        & set(_missing_fields(result))
         or not result.registry_id
     )
     if not wants_fill and not result.registry_id:
@@ -795,19 +820,23 @@ async def enrich_result(
         # but with no official number — re-query GLEIF by the FULL registered
         # name to grab its registeredAs (GLEIF's search misses the US flagship on
         # a one-word query but finds it on the full name, e.g. Palantir).
-        if not result.registry_id and result.confidence >= 0.7:
+        if not result.registry_id and result.confidence >= 0.5:
             try:
                 result = await _gleif_name_backfill(result, query, run_id)
             except Exception:
                 logger.exception("gleif name backfill failed for %s", query.query_id)
 
-        # Web fill only for confidently identified entities: enriching the
-        # wrong company is worse than returning blanks. Opt-out for fast batches
-        # (it's the main per-row LLM latency cost) — like MCP's owner-lookup flag.
+        # Web fill for an already-IDENTIFIED entity. Identity strictness (don't
+        # emit a wrong registry_id/name) is a SEPARATE concern, enforced upstream;
+        # here we just fill datapoints (VAT, NACE industry, capital, …) of an
+        # entity we already know. So the gate is "do we have a grounded identity"
+        # — a registry_id, or a solidly-confident name — NOT a high score. The old
+        # 0.7 gate silently dropped Tier-A for every 'probable' row (e.g. BMW at
+        # 0.68), losing data that the web/Impressum readily has.
         if (
             settings.enrichment_web_fill
-            and result.confidence >= 0.7
             and _missing_tier_a(result)  # skip the costly call to chase only officers
+            and (result.registry_id or result.confidence >= 0.55)
         ):
             try:
                 # Hard wall-clock cap: web_fill (Sonnet + web_search, up to
@@ -864,10 +893,15 @@ async def enrich_result(
     )
     # Scrub junk + enforce the no-id-means-no-data contract on the final row.
     result = _scrub(result)
+    # Provenance: only when the row still asserts an identity after scrub
+    # (a blanked/ambiguous row claims nothing, so it cites nothing).
+    has_identity_final = bool(result.registry_id or result.name_normalized_register_name)
+    sources = _collect_sources(result, matched) if has_identity_final else []
     await event_log.log_event(
         run_id, "enrichment_done", query.query_id,
         flag=scored.flag, confidence=result.confidence,
         signals=scored.as_event(),
+        sources=sources,
         filled=[f for f in ENRICHABLE_FIELDS if getattr(result, f)],
         empty=_missing_fields(result),
         contradictions=len(contradictions),
