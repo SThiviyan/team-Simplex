@@ -169,8 +169,7 @@ function ResultCard({ query, r }: { query: string; r: ExtractionResult }) {
         </div>
       </div>
 
-      {/* Every CSV column, in order. Empty fields are shown as a dash so the
-          full schema is always visible (matches the downloadable CSV). */}
+      {/* Identity — the core resolution fields that identify the register entry. */}
       <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 text-[13px] sm:grid-cols-2">
         <Field label="Registry ID" value={r.registry_id} mono />
         <Field label="Registry court" value={r.registry_court} />
@@ -179,16 +178,27 @@ function ResultCard({ query, r }: { query: string; r: ExtractionResult }) {
         <Field label="Organization type" value={r.organization_type} />
         <Field label="Status" value={r.status} />
         <Field label="Incorporation date" value={r.incorporation_date} />
-        <Field label="VAT number" value={r.vat_number} mono />
-        <Field label="Industry code" value={r.industry_code} mono />
-        <Field label="Industry" value={r.industry} />
-        <Field label="Capitalization" value={r.capitalization} />
         <Field label="No-match reason" value={r.no_match_reason} />
-        <Field label="Trade names" value={r.trade_names} span />
-        <Field label="Business purpose" value={r.business_purpose} span />
-        <Field label="Registered address" value={r.registered_address} span />
-        <Field label="Officers" value={r.officers} span />
       </dl>
+
+      {/* Tier A details — the heavily-weighted PDF datapoints, set off as their
+          own block so the newly-enriched fields are clearly visible. Empty ->
+          dash, so the full schema (and CSV parity) stays visible. */}
+      <div className="space-y-1.5 border-t border-line pt-2">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-accent/80">
+          Tier A details
+        </p>
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 text-[13px] sm:grid-cols-2">
+          <Field label="VAT number" value={r.vat_number} mono />
+          <Field label="Industry code" value={r.industry_code} mono />
+          <Field label="Industry" value={r.industry} />
+          <Field label="Capitalization" value={r.capitalization} />
+          <Field label="Trade names" value={r.trade_names} span />
+          <Field label="Business purpose" value={r.business_purpose} span />
+          <Field label="Registered address" value={r.registered_address} span />
+          <Field label="Officers" value={r.officers} span />
+        </dl>
+      </div>
 
       {/* Why the confidence is what it is — the signals behind the score. */}
       <ConfidenceSignals result={r} queryJurisdiction={parseQuery(query).jurisdiction} />
