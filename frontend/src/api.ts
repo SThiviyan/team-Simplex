@@ -44,6 +44,13 @@ export type Owner = {
   source: string | null;
 };
 
+// A source the LLM cited to decide a tie between near-identical matches.
+export type Reference = {
+  url: string;
+  title: string;
+  detail: string | null;
+};
+
 // One winning result produced by the matching layer (RapidFuzz + LLM filter).
 export type Winner = {
   query_id: string;
@@ -54,6 +61,9 @@ export type Winner = {
   confidence: number;
   reasoning: string;
   recursive_search: { suggested_query: string } | null;
+  // Authoritative sources that broke a tie between ~100% matches (Wikipedia,
+  // business register, VAT/LEI lookup, …). Empty unless web disambiguation ran.
+  references?: Reference[];
   candidates: CompanyRecord[];
   // The owner, when found (decision === 'match' and a web result was returned).
   owner?: Owner | null;

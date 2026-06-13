@@ -290,6 +290,29 @@ function WinnerCard({
           {winner.reasoning}
         </p>
       ) : null}
+
+      {winner.references && winner.references.length > 0 ? (
+        <div className="border-t border-line pt-2 space-y-1">
+          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">
+            Deciding references
+          </p>
+          <ul className="space-y-1">
+            {winner.references.map((ref) => (
+              <li key={ref.url} className="text-[12px] leading-snug">
+                <a
+                  href={ref.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-accent underline decoration-dotted underline-offset-2"
+                >
+                  {ref.title}
+                </a>
+                {ref.detail ? <span className="text-muted"> — {ref.detail}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </li>
   );
 }

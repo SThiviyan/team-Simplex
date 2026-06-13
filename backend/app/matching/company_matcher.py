@@ -163,34 +163,23 @@ def _normalize_jurisdiction(value: str | None) -> str:
 
 
 def update_confidence(
-    prior_confidence: float,
     name_score: float,
     jurisdiction_match: bool,
     *,
-    prior_weight: float = 0.4,
     jurisdiction_penalty: float = 0.5,
 ) -> float:
-    """Re-derive a confidence value from the prior confidence and the match.
+    """Confidence from the NAME match alone.
 
-    The result blends two independent pieces of evidence:
-
-    * ``prior_confidence`` — what the source already believed (0..1).
-    * ``name_score``       — how well the name matched the target (0..1).
-
-    They are combined as a weighted average controlled by ``prior_weight``
-    (the share given to the prior; the name score gets the rest). A
-    jurisdiction mismatch then multiplies the result by
-    ``jurisdiction_penalty`` rather than discarding the row outright, so a
-    strong name match in the "wrong" jurisdiction is demoted but still
-    surfaceable.
-
-    The output is clamped to ``[0.0, 1.0]``.
+    The gather layer attaches its own ``confidence`` (a crude difflib name
+    ratio), but the matching stages deliberately IGNORE it — we filter and rank
+    on the name match only. A jurisdiction mismatch then multiplies the result by
+    ``jurisdiction_penalty`` (demote, don't drop) rather than counting against
+    the name. The output is clamped to ``[0.0, 1.0]``.
     """
-    prior_weight = min(max(prior_weight, 0.0), 1.0)
-    blended = prior_weight * prior_confidence + (1.0 - prior_weight) * name_score
+    conf = name_score
     if not jurisdiction_match:
-        blended *= jurisdiction_penalty
-    return round(min(max(blended, 0.0), 1.0), 4)
+        conf *= jurisdiction_penalty
+    return round(min(max(conf, 0.0), 1.0), 4)
 
 
 def score_record(
@@ -198,7 +187,6 @@ def score_record(
     target: Target,
     *,
     scorer: Callable[..., float] = DEFAULT_SCORER,
-    prior_weight: float = 0.4,
     jurisdiction_penalty: float = 0.5,
     tf_weights: dict[str, float] | None = None,
 ) -> Candidate:
@@ -242,14 +230,14 @@ def score_record(
         record.get(JURISDICTION_FIELD)
     ) == _normalize_jurisdiction(target.jurisdiction)
 
+    # The source's own confidence is read for display only — it does NOT feed
+    # the match confidence (the matching stages filter on name).
     prior = record.get(CONFIDENCE_FIELD)
     prior = float(prior) if isinstance(prior, (int, float)) else 0.0
 
     confidence = update_confidence(
-        prior,
         name_score,
         jurisdiction_match,
-        prior_weight=prior_weight,
         jurisdiction_penalty=jurisdiction_penalty,
     )
 
@@ -270,7 +258,6 @@ def find_candidates(
     score_cutoff: float = 0.6,
     require_jurisdiction: bool = False,
     scorer: Callable[..., float] = DEFAULT_SCORER,
-    prior_weight: float = 0.4,
     jurisdiction_penalty: float = 0.5,
 ) -> list[Candidate]:
     """Gross-filter, rank, and return the top candidates for ``target``.
@@ -295,13 +282,13 @@ def find_candidates(
     scorer:
         Any RapidFuzz scorer (``fuzz.ratio``, ``fuzz.WRatio``,
         ``fuzz.token_sort_ratio`` …). Returns 0..100.
-    prior_weight / jurisdiction_penalty:
-        Passed through to :func:`update_confidence`.
+    jurisdiction_penalty:
+        Passed through to :func:`update_confidence` (jurisdiction-mismatch demote).
 
     Returns
     -------
     list[Candidate]
-        Sorted by updated confidence (desc), then raw name score (desc).
+        Sorted by name-based confidence (desc), then raw name score (desc).
     """
     companies = list(companies)
     # Fellegi-Sunter token weights computed over the whole candidate set + the
@@ -312,7 +299,6 @@ def find_candidates(
             record,
             target,
             scorer=scorer,
-            prior_weight=prior_weight,
             jurisdiction_penalty=jurisdiction_penalty,
             tf_weights=tf_weights,
         )

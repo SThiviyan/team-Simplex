@@ -122,6 +122,7 @@ def run_matching(
                 "confidence": float(top.get("confidence") or 0.0),
                 "reasoning": f"Semantic filter unavailable ({exc}); used top RapidFuzz candidate.",
                 "recursive_search": None,
+                "references": [],
             }
         else:
             result = {
@@ -130,6 +131,7 @@ def run_matching(
                 "confidence": 0.0,
                 "reasoning": f"Semantic filter unavailable ({exc}); no fuzzy candidates.",
                 "recursive_search": None,
+                "references": [],
             }
 
     # Expose the shortlist that fed the decision (useful for the UI / debugging).
@@ -161,7 +163,7 @@ async def match_payload(
         {
           "query_id", "name", "jurisdiction",
           "decision", "winning_candidate", "confidence", "reasoning",
-          "recursive_search", "candidates"
+          "recursive_search", "references", "candidates"
         }
     """
     queries = payload.get("queries") or []

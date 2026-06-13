@@ -16,8 +16,13 @@ import json
 from difflib import SequenceMatcher
 from pathlib import Path
 
+from app.config import settings
 from app.search.base import SearchProvider, SearchResult
 from app.search.resolver import _normalise
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Lands at backend/search_results.json — inside the bind-mounted repo, so it
 # shows up in the IDE.
@@ -86,11 +91,27 @@ def select_providers(
     return [p for p in providers if p.jurisdictions is None or cc in p.jurisdictions]
 
 
+async def _search_one(
+    provider: SearchProvider, name: str, limit: int
+) -> list[SearchResult]:
+    """Run one provider under a hard timeout so a slow/hanging source cannot
+    stall the whole gather. A timeout (or any error) is non-fatal — empty list."""
+    try:
+        return await asyncio.wait_for(
+            provider.search(name, limit=limit), timeout=settings.provider_timeout
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "provider %s exceeded %.0fs timeout; skipping", provider.name, settings.provider_timeout
+        )
+        return []
+
+
 async def _gather(
     selected: list[SearchProvider], name: str, jurisdiction: str | None, limit: int
 ) -> list[SearchResult]:
     batches = await asyncio.gather(
-        *(p.search(name, limit=limit) for p in selected), return_exceptions=True
+        *(_search_one(p, name, limit) for p in selected), return_exceptions=True
     )
     results: list[SearchResult] = []
     for b in batches:

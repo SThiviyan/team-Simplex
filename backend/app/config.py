@@ -13,6 +13,23 @@ class Settings(BaseSettings):
     handelsregister_api_key: str | None = Field(
         default=None, description="handelsregister.ai API key (sent as x-api-key)"
     )
+    # The keyless fallback drives a headless browser against handelsregister.de —
+    # ~50s per query and frequently returns nothing. Off by default so a missing
+    # API key means the provider returns quickly (empty) instead of blocking the
+    # whole gather. Set true only if you really want the slow scrape.
+    handelsregister_scrape_fallback: bool = Field(
+        default=False,
+        description="Allow the slow browser scrape of handelsregister.de when no API key is set",
+    )
+
+    # --- Gather layer (federated provider fan-out) ------------------------
+    # Hard per-provider deadline. _gather awaits every selected provider, so one
+    # slow/hanging register would otherwise stall the whole batch. Anything past
+    # this is cancelled and treated as an (empty) provider failure — non-fatal.
+    provider_timeout: float = Field(
+        default=12.0,
+        description="Per-provider search timeout (seconds); slow providers are cancelled",
+    )
 
     # --- Companies House (UK commercial register) -------------------------
     # Optional, keyed source. If unset, the provider disables itself and the
@@ -50,8 +67,12 @@ class Settings(BaseSettings):
         description="How many query rows are processed in parallel during a batch run",
     )
     owner_lookup_enabled: bool = Field(
-        default=True,
-        description="After a company is matched, web-search its owner and include it in the output",
+        default=False,
+        description=(
+            "Opt-in: after a company is matched, web-search its owner and include it "
+            "in the output. Off by default because it adds a full web-search LLM call "
+            "per match (the main latency cost). Set OWNER_LOOKUP_ENABLED=true to enable."
+        ),
     )
 
 
