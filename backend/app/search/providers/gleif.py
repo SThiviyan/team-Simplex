@@ -20,6 +20,17 @@ def _score(query: str, name: str | None, rank: int) -> float:
     return round(max(0.3, base - rank * 0.02), 4)
 
 
+def _pick_jurisdiction(juris: str | None, country: str | None) -> str | None:
+    """The state-level GLEIF jurisdiction (US-CA, CA-ON) when it refines the
+    country; else the country. Keeps US/Canada state granularity that the
+    registeredAs number is scoped to."""
+    j = (juris or "").strip().upper()
+    c = (country or "").strip().upper()
+    if "-" in j and (not c or j.split("-")[0] == c):
+        return j
+    return c or (j or None)
+
+
 def _snippet(e: dict) -> str:
     place = ", ".join(p for p in (e.get("city"), e.get("country")) if p)
     bits = [
@@ -55,7 +66,11 @@ class GleifSearchProvider(SearchProvider):
                     snippet=_snippet(e),
                     score=_score(query, e.get("name"), i),
                     source=self.name,
-                    jurisdiction=e.get("country"),
+                    # Prefer GLEIF's state-level jurisdiction (US-CA, US-NY,
+                    # CA-ON) over the bare country, since US/Canada register at
+                    # state/province level and the registeredAs number is the
+                    # STATE filing number. Falls back to the country otherwise.
+                    jurisdiction=_pick_jurisdiction(e.get("jurisdiction"), e.get("country")),
                     # The NATIONAL registry number, not the LEI: an LEI is a
                     # cross-reference code, never the official registration
                     # number the output schema asks for. LEI lives in metadata.

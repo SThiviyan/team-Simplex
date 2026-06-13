@@ -114,9 +114,20 @@ async def _gather(
         if isinstance(b, list):
             results.extend(b)
     if jurisdiction:
-        cc = jurisdiction.upper()
-        # Keep only companies confirmed to be in that jurisdiction.
-        results = [r for r in results if (r.jurisdiction or "").upper() == cc]
+        want = jurisdiction.upper()
+        want_country = want.split("-")[0]
+
+        def in_jurisdiction(r: SearchResult) -> bool:
+            # Match on country, so a "US" query keeps state-level records
+            # ("US-CA", "US-NY") — the US/Canada filing number is scoped to the
+            # state, and GLEIF reports jurisdiction at that granularity. A
+            # state-specific query ("US-CA") still accepts the bare country.
+            rj = (r.jurisdiction or "").upper()
+            if not rj:
+                return False
+            return rj == want or rj.split("-")[0] == want_country
+
+        results = [r for r in results if in_jurisdiction(r)]
     return sorted(results, key=lambda r: r.score, reverse=True)
 
 

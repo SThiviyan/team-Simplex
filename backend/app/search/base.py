@@ -58,8 +58,16 @@ class SearchResult(BaseModel):
         # address, then description) over the server it was found on — e.g. a
         # company returned by the French register whose address ends in
         # "München, DE" is DE, not FR. Done first so the registry_id is
-        # formatted for the corrected jurisdiction.
-        self.jurisdiction = infer_jurisdiction(self.address, self.snippet) or self.jurisdiction
+        # formatted for the corrected jurisdiction. BUT never downgrade a
+        # state/province code (US-CA, CA-ON) to the bare country of the same
+        # nation — that granularity is what the US/Canada filing number is
+        # scoped to.
+        inferred = infer_jurisdiction(self.address, self.snippet)
+        if inferred:
+            cur = (self.jurisdiction or "").upper()
+            same_country = cur.split("-")[0] == inferred.upper().split("-")[0]
+            if not (same_country and "-" in cur and "-" not in inferred):
+                self.jurisdiction = inferred
         self.registry_id, self.registry_court = normalize_registry(
             self.jurisdiction, self.registry_id, self.registry_court
         )
