@@ -153,22 +153,35 @@ async def _run_tier(
 async def _gather(
     selected: list[SearchProvider], name: str, jurisdiction: str | None, limit: int
 ) -> list[SearchResult]:
-    """Gather every relevant source concurrently, capped by gather_deadline.
+    """Two-tier gather: FREE sources first, PAID (Apify/NorthData) only as a
+    cost-gated fallback.
 
-    The country's source hierarchy (data/source_ranking.json) is FOUNDATION-first
-    — the national register(s) + GLEIF carry the official registry_id; Wikidata is
-    a SUPPLEMENT that may only FILL extra fields, never supply the identity (it has
-    no registry_id). That hierarchy is enforced where it matters — winner
-    selection and the enrichment field-merge (source_ranking.order_records) — so
-    Wikidata can never win the identity. We still GATHER it (it's cheap and its
-    QID/website feeds the fast deterministic Impressum + cross-reference
-    enrichment); skipping it only starved enrichment. Web search is the agent's
-    last resort when no foundation source matched at all.
+    Tier 1 = all keyless sources (the national registers incl. LINDAS for CH +
+    Handelsregister for DE, GLEIF, Wikidata, …), run concurrently and capped by
+    gather_deadline. Tier 2 = the premium Apify-backed sources (NorthData for
+    DE/AT/CH, etc.) — these cost money and are slow (~35s), so we only run them
+    when the free tier produced NO official registry_id. That:
+      - saves the limited Apify budget (NorthData isn't billed when a free source
+        already found the company — e.g. DE via Handelsregister, CH via LINDAS),
+      - matches the intended order ("Handelsregister/LINDAS first, then down to
+        NorthData"),
+      - and keeps the common case fast (no ~35s actor unless actually needed).
+    The source hierarchy (source_ranking.json) still governs winner selection and
+    the field-merge; Wikidata stays a fill-only supplement (no registry_id).
     """
     from app.config import settings
 
-    results = await _run_tier(selected, name, limit, settings.gather_deadline)
-    return sorted(_filter_jurisdiction(results, jurisdiction), key=lambda r: r.score, reverse=True)
+    free = [p for p in selected if getattr(p, "cost", None) != "premium"]
+    premium = [p for p in selected if getattr(p, "cost", None) == "premium"]
+
+    results = _filter_jurisdiction(
+        await _run_tier(free, name, limit, settings.gather_deadline), jurisdiction
+    )
+    if premium and not any(r.registry_id for r in results):
+        results += _filter_jurisdiction(
+            await _run_tier(premium, name, limit, settings.gather_deadline), jurisdiction
+        )
+    return sorted(results, key=lambda r: r.score, reverse=True)
 
 
 async def search_jurisdiction(
